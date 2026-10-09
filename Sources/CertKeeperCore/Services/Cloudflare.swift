@@ -3,7 +3,18 @@ import Foundation
 /// Cloudflare DNS API client, scoped to what DNS-01 needs.
 /// The token needs `Zone:Read` and `DNS:Edit` for the relevant zones.
 public struct CloudflareClient: Sendable {
-    public struct Zone: Decodable, Sendable { public let id: String; public let name: String }
+    public struct Zone: Decodable, Sendable {
+        public let id: String
+        public let name: String
+        public var account: Account?
+        public struct Account: Decodable, Sendable { public let id: String; public let name: String? }
+
+        public init(id: String, name: String, account: Account? = nil) {
+            self.id = id
+            self.name = name
+            self.account = account
+        }
+    }
     struct Record: Decodable { let id: String; let name: String; let content: String; let type: String }
     struct Envelope<T: Decodable>: Decodable {
         let success: Bool
@@ -16,6 +27,7 @@ public struct CloudflareClient: Sendable {
 
     public struct CloudflareError: LocalizedError {
         public let message: String
+        public var codes: [Int] = []
         public var errorDescription: String? { "Cloudflare: \(message)" }
     }
 
@@ -46,16 +58,45 @@ public struct CloudflareClient: Sendable {
             throw CloudflareError(message: "Unexpected response: \(String(decoding: data.prefix(500), as: UTF8.self))")
         }
         guard env.success else {
-            throw CloudflareError(message: env.errors.map { "\($0.message) (\($0.code))" }.joined(separator: "; "))
+            throw CloudflareError(message: env.errors.map { "\($0.message) (\($0.code))" }.joined(separator: "; "),
+                                  codes: env.errors.map(\.code))
         }
         return env
     }
 
-    /// Confirms the token is active.
-    public func verifyToken() async throws -> String {
+    public struct Verification: Sendable {
+        public let status: String
+        /// Set for an account-owned token (verified against that account), nil for a user token.
+        public let accountName: String?
+        public let zones: [Zone]
+    }
+
+    /// Confirms the token is active. User tokens verify at /user/tokens/verify; account-owned tokens
+    /// are rejected there ("Invalid API Token", 1000) and verify at /accounts/{id}/tokens/verify,
+    /// with the account found through the zones the token can read.
+    public func verifyToken() async throws -> Verification {
         struct Status: Decodable { let status: String }
-        let env: Envelope<Status> = try await request("GET", "user/tokens/verify")
-        return env.result?.status ?? "unknown"
+        do {
+            let env: Envelope<Status> = try await request("GET", "user/tokens/verify")
+            return Verification(status: env.result?.status ?? "unknown", accountName: nil, zones: try await listZones())
+        } catch let userError as CloudflareError where userError.codes.contains(1000) {
+            let zones: [Zone]
+            do { zones = try await listZones() } catch { throw userError }
+            let accounts = zones.compactMap(\.account).reduce(into: [Zone.Account]()) { list, a in
+                if !list.contains(where: { $0.id == a.id }) { list.append(a) }
+            }
+            guard !accounts.isEmpty else { throw userError }
+            var lastError: Error = userError
+            for account in accounts {
+                do {
+                    let env: Envelope<Status> = try await request("GET", "accounts/\(account.id)/tokens/verify")
+                    return Verification(status: env.result?.status ?? "unknown", accountName: account.name ?? account.id, zones: zones)
+                } catch {
+                    lastError = error
+                }
+            }
+            throw lastError
+        }
     }
 
     public func listZones() async throws -> [Zone] {

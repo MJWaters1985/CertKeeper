@@ -91,9 +91,9 @@ struct CloudflareSettings: View {
         let t = token.isEmpty ? (Keychain.get(.cloudflareToken) ?? "") : token
         let client = CloudflareClient(token: t)
         do {
-            let state = try await client.verifyToken()
-            let zones = try await client.listZones()
-            status = "Token is \(state). Zones: \(zones.map(\.name).joined(separator: ", "))"
+            let v = try await client.verifyToken()
+            let owner = v.accountName.map { " (account token for \($0))" } ?? ""
+            status = "Token is \(v.status)\(owner). Zones: \(v.zones.map(\.name).joined(separator: ", "))"
         } catch {
             status = error.localizedDescription
         }
