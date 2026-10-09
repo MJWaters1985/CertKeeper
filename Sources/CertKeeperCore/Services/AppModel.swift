@@ -624,9 +624,30 @@ public final class AppModel {
             detail: outstanding == 0 ? "Everything is current" : "\(outstanding) deployment(s) still out of date")
     }
 
+    /// Reads every secret the app owns once, so any Keychain access prompt appears at launch while
+    /// someone is at the Mac — not during an unattended renewal — and missing keys are flagged early.
+    public func preflightSecrets() async {
+        var items: [Keychain.Item] = [.cloudflareToken, .acmeAccountKey]
+        items += inventory.hosts.map { .hostPassword($0.id) }
+        items += inventory.deployments.flatMap { d in DeploymentOption.secrets.map { .deploymentSecret(d.id, $0.rawValue) } }
+        let issued = inventory.certificates.filter { $0.leafPEM != nil }
+        items += issued.map { .certificateKey($0.id) }
+        let store = secrets
+        let found = await Task.detached { items.map { store.get($0) != nil } }.value
+        let missingKeys = zip(items, found).compactMap { item, ok -> String? in
+            guard !ok, case .certificateKey(let id) = item else { return nil }
+            return issued.first { $0.id == id }?.name
+        }
+        if !missingKeys.isEmpty {
+            log(.error, "Private keys missing from the Keychain — these certificates can't be deployed until reissued",
+                detail: missingKeys.joined(separator: ", "))
+        }
+    }
+
     public func startScheduler() {
         schedulerTask?.cancel()
         schedulerTask = Task { [weak self] in
+            await self?.preflightSecrets()
             try? await Task.sleep(for: .seconds(30))
             while !Task.isCancelled {
                 guard let self else { return }

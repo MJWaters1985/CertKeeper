@@ -129,3 +129,30 @@ import X509
         #expect(d.servedChainComplete == nil)
     }
 }
+
+@Suite @MainActor struct PreflightTests {
+    @Test func flagsIssuedCertificatesWithoutKeys() async throws {
+        let store = MemorySecretStore()
+        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"),
+                         secrets: store)
+        let (pem, key) = try selfSigned(["a.example.com"])
+        var withKey = ManagedCertificate(name: "a.example.com", domains: ["a.example.com"])
+        withKey.leafPEM = pem
+        var withoutKey = ManagedCertificate(name: "b.example.com", domains: ["b.example.com"])
+        withoutKey.leafPEM = pem
+        let notIssued = ManagedCertificate(name: "c.example.com", domains: ["c.example.com"])
+        [withKey, withoutKey, notIssued].forEach(m.addCertificate)
+        try store.set(key, for: .certificateKey(withKey.id))
+
+        await m.preflightSecrets()
+        let entry = try #require(m.inventory.log.first { $0.message.contains("Private keys missing") })
+        #expect(entry.detail == "b.example.com", "only issued certificates whose key is gone")
+    }
+
+    @Test func quietWhenEverythingIsPresent() async throws {
+        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"),
+                         secrets: MemorySecretStore())
+        await m.preflightSecrets()
+        #expect(m.inventory.log.isEmpty)
+    }
+}
