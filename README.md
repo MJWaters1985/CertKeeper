@@ -95,6 +95,15 @@ The first launch after switching asks once per item — choose **Always Allow** 
 3. Add hosts. Use key-based SSH or a stored password, as root or as a user with sudo (enable *Use sudo*).
 4. Run **Discover** on each host and adopt what it finds, or create certificates and add deployments manually.
 
+## App icon
+
+`Support/Icons/CertKeeper.icon` is a layered Icon Composer icon: a certificate behind a gold seal and ribbons, on a
+teal gradient. Its layers are flat, full-bleed SVGs with no baked-in shadows or gloss; macOS 26+ applies the
+rounded-square mask, Liquid Glass, depth and shadow itself. `build-app.sh` compiles it with `actool` into
+`Assets.car`, plus a flattened `CertKeeper.icns` for older macOS. To change it, edit `certificate_layers()` in
+`Support/Icons/make_icons.py` and run `python3 make_icons.py --icon`, or open the `.icon` in Icon Composer
+(Xcode › Open Developer Tool). The other concepts and their previews are kept in the same folder.
+
 ## Tests
 
 ```sh

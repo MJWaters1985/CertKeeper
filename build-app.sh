@@ -30,6 +30,17 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/CertKeeper"
 cp Support/Info.plist "$APP/Contents/Info.plist"
+# App icon: the layered Icon Composer icon compiles to Assets.car (macOS 26+ renders it with Liquid
+# Glass) plus a flattened CertKeeper.icns for older systems.
+# (actool resolves relative paths against the input's folder, so pass absolute ones.)
+if ! xcrun actool "$PWD/Support/Icons/CertKeeper.icon" --compile "$PWD/$APP/Contents/Resources" --platform macosx \
+     --minimum-deployment-target 15.0 --app-icon CertKeeper \
+     --output-partial-info-plist "$(mktemp -t certkeeper-icon).plist" --errors --warnings > "$APP.actool.log"; then
+  cat "$APP.actool.log" >&2
+  exit 1
+fi
+grep -q '<string>.*Assets.car</string>' "$APP.actool.log" || { cat "$APP.actool.log" >&2; echo "icon compile produced no Assets.car" >&2; exit 1; }
+rm -f "$APP.actool.log"
 codesign --force --options runtime --sign "$IDENTITY" "$APP"
 echo "Built $APP (signed with: $IDENTITY)"
 codesign -d -r- "$APP" 2>&1 | sed -n 's/^designated => /designated requirement: /p'
