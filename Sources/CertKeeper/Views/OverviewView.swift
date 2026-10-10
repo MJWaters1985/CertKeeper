@@ -1,3 +1,4 @@
+import AppKit
 import CertKeeperCore
 import SwiftUI
 
@@ -65,6 +66,7 @@ struct OverviewView: View {
                     .width(min: 90, ideal: 110, max: 150)
                 }
                 .frame(maxWidth: .infinity, minHeight: 180, maxHeight: .infinity)
+                .background(FitTableColumnsOnAppear(columnTitle: "Valid For"))
             }
         }
         .padding(20)
@@ -193,5 +195,41 @@ struct ManagementBadge: View {
             .foregroundStyle(monitored ? Color.purple : Color.blue)
             .help(monitored ? "Renewed by another system; CertKeeper watches it and warns before it expires."
                             : "CertKeeper issues, renews and deploys it.")
+    }
+}
+
+/// SwiftUI's Table lays its columns out at their ideal widths when it first appears and only shares
+/// out spare width during a live window resize, so at launch the columns don't fill the window. Once
+/// the table is in a window, this finds it (by one of its column titles) and fits its columns to the
+/// available width, within each column's min/max. Dragging dividers still works afterwards.
+struct FitTableColumnsOnAppear: NSViewRepresentable {
+    let columnTitle: String
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { fit(from: view, attempt: 0) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
+
+    private func fit(from view: NSView, attempt: Int) {
+        if let root = view.window?.contentView, let table = findTable(in: root) {
+            table.sizeToFit()
+        } else if attempt < 40 {
+            // Not laid out yet: try again shortly (up to ~2 s).
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { fit(from: view, attempt: attempt + 1) }
+        }
+    }
+
+    private func findTable(in view: NSView) -> NSTableView? {
+        if let table = view as? NSTableView, !(table is NSOutlineView),
+           table.tableColumns.contains(where: { $0.title == columnTitle }), table.bounds.width > 0 {
+            return table
+        }
+        for subview in view.subviews {
+            if let found = findTable(in: subview) { return found }
+        }
+        return nil
     }
 }
