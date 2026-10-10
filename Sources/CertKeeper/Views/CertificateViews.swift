@@ -143,26 +143,7 @@ struct CertificateDetailView: View {
     }
 
     func export(_ cert: ManagedCertificate) {
-        let panel = NSOpenPanel()
-        panel.canChooseDirectories = true
-        panel.canChooseFiles = false
-        panel.canCreateDirectories = true
-        panel.prompt = "Export Here"
-        panel.message = "Writes cert.pem, chain.pem, fullchain.pem and privkey.pem"
-        guard panel.runModal() == .OK, let dir = panel.url else { return }
-        do {
-            try cert.leafPEM?.write(to: dir.appendingPathComponent("cert.pem"), atomically: true, encoding: .utf8)
-            try cert.chainPEM?.write(to: dir.appendingPathComponent("chain.pem"), atomically: true, encoding: .utf8)
-            try cert.fullchainPEM?.write(to: dir.appendingPathComponent("fullchain.pem"), atomically: true, encoding: .utf8)
-            if let key = Keychain.get(.certificateKey(cert.id)) {
-                let url = dir.appendingPathComponent("privkey.pem")
-                try key.write(to: url, atomically: true, encoding: .utf8)
-                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            }
-            model.log(.info, "Exported \(cert.name) to \(dir.path)")
-        } catch {
-            model.log(.error, "Export failed", detail: error.localizedDescription)
-        }
+        CertExportUI.export(cert, model: model)
     }
 }
 

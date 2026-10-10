@@ -95,6 +95,21 @@ The first launch after switching asks once per item — choose **Always Allow** 
 3. Add hosts. Use key-based SSH or a stored password, as root or as a user with sudo (enable *Use sudo*).
 4. Run **Discover** on each host and adopt what it finds, or create certificates and add deployments manually.
 
+## Exporting certificates
+
+**Export…** on a certificate writes it with its full chain in a choice of formats. Private keys are written
+readable only by you, and you're asked before existing files are replaced. The last format used is remembered.
+
+| Format | Files | Typical use |
+|---|---|---|
+| PEM, separate files | `NAME.cert.pem`, `.chain.pem`, `.fullchain.pem`, `.privkey.pem` | nginx, Apache, most Linux tools |
+| PEM, single file | `NAME.pem` (private key, then full chain) | HAProxy, Pi-hole, lighttpd |
+| PKCS#12 | `NAME.p12` (full chain + key, password protected; AES-256, or 3DES for older systems) | Windows/IIS, macOS Keychain, Java, Jellyfin |
+| PKCS#7 + key | `NAME.p7b` (full chain) + `NAME.key` (PEM) | Windows, Java |
+| DER + key | `NAME.cer`, `NAME.chain-N.cer`, `NAME.key.der` (PKCS#8) | Windows, appliances, Android |
+
+PKCS#12 and PKCS#7 are produced with macOS's `/usr/bin/openssl`, in a private temporary folder.
+
 ## Exporting and importing the configuration
 
 **File › Export Configuration…** (⇧⌘E) saves hosts, certificates, deployments, settings and ACME account links to
