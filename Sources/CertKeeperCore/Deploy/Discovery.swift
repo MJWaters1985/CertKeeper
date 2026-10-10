@@ -526,6 +526,19 @@ public enum Discovery {
         }
     }
 
+    /// For nginx/Apache: whether that server's current config still reads the deployment's certificate
+    /// file, and which files it reads instead. nil when discovery found nothing for that server instance.
+    public static func configStillUses(_ d: Deployment, in endpoints: [DiscoveredEndpoint]) -> (inUse: Bool, current: [String])? {
+        guard d.kind == .nginx || d.kind == .apache else { return nil }
+        let conf = d.option(.nginxConf)
+        let sameServer = endpoints.filter {
+            $0.kind == d.kind && (d.kind == .apache || ($0.options?[DeploymentOption.nginxConf.rawValue] ?? "") == conf)
+        }
+        guard !sameServer.isEmpty else { return nil }
+        let paths = sameServer.map(\.certPath).reduce(into: [String]()) { if !$0.contains($1) { $0.append($1) } }
+        return (paths.contains(d.certPath), paths)
+    }
+
     /// The catalog app name for a TrueNAS app endpoint, nil for the web UI.
     public static func truenasApp(_ endpoint: DiscoveredEndpoint) -> String? {
         guard endpoint.kind == .truenas, endpoint.certPath.hasPrefix("app:") else { return nil }

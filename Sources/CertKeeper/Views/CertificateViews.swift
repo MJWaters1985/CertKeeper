@@ -162,6 +162,9 @@ struct DeploymentRow: View {
                     }
                 }
                 .font(.caption).foregroundStyle(.secondary)
+                if let attention = deployment.attention {
+                    Text(attention).font(.caption).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
+                }
                 if let exp = deployment.deployedNotAfter {
                     Text("Serving cert expiring \(exp.formatted(date: .abbreviated, time: .omitted))\(deployment.lastChecked.map { " · checked \($0.relative)" } ?? "")")
                         .font(.caption2).foregroundStyle(.tertiary)
@@ -319,6 +322,7 @@ struct DeploymentEditor: View {
         }
         deployment.options[DeploymentOption.pfxPassword.rawValue] = nil
         deployment.scriptOverride = customizeScript ? script : nil
+        deployment.attention = nil  // edited: let the next pass try again
         if let i = model.inventory.deployments.firstIndex(where: { $0.id == deployment.id }) {
             if model.inventory.deployments[i].certificateID != deployment.certificateID { deployment.deployedSHA256 = nil }
             model.inventory.deployments[i] = deployment

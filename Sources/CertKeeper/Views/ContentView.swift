@@ -114,6 +114,9 @@ struct DeploymentStateBadge: View {
             ProgressView().controlSize(.small)
         } else if !deployment.enabled {
             Text("Disabled").font(.caption).foregroundStyle(.secondary)
+        } else if let attention = deployment.attention {
+            Label("Needs attention", systemImage: "exclamationmark.octagon.fill").font(.caption).foregroundStyle(.red)
+                .help(attention)
         } else if deployment.lastError != nil {
             Label("Error", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red)
                 .help(deployment.lastError ?? "")

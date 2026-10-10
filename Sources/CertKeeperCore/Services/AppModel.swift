@@ -356,10 +356,17 @@ public final class AppModel {
               let host = host(d.hostID) else { return }
         do {
             var found: CertificateSummary?
+            var onDisk: CertificateSummary?
+            var fileMissing = false
             if d.kind.usesFilePaths {
                 let probe = Discovery.probeScript(path: d.certPath, pkcs12: d.isPKCS12, password: secret(.pfxPassword, for: d.id))
-                let r = try await ssh.runChecked(probe, on: host, timeout: 60)
+                let r = try await ssh.run(probe, on: host, timeout: 60)
+                if r.status == 255 {
+                    throw SSHRunner.SSHError(message: "SSH to \(host.name) failed: \(r.stderr.trimmingCharacters(in: .whitespacesAndNewlines))", result: r)
+                }
+                fileMissing = !r.succeeded
                 found = try? CertCrypto.summarize(pem: r.stdout)
+                onDisk = found
             } else {
                 let report = try await Discovery.run(on: host, ssh: ssh)
                 let current = certificate(d.certificateID)?.current?.sha256
@@ -399,8 +406,29 @@ public final class AppModel {
                     found = served
                 }
             }
+            // A server whose config moved to other files would otherwise be redeployed every pass.
+            var attention: String?? = .none  // .none = unchanged
+            if d.kind == .nginx || d.kind == .apache,
+               fileMissing || (onDisk != nil && found != nil && onDisk?.sha256 != found?.sha256) {
+                let report = try await Discovery.run(on: host, ssh: ssh)
+                if let usage = Discovery.configStillUses(d, in: report.endpoints) {
+                    if usage.inUse {
+                        attention = .some(nil)
+                    } else {
+                        let server = d.kind == .nginx ? "nginx\(d.option(.nginxConf).isEmpty ? "" : " [\(d.option(.nginxConf))]")" : "Apache"
+                        attention = .some("\(server) no longer reads \(d.certPath); it now uses \(usage.current.joined(separator: ", ")). "
+                            + "Automatic deploys are paused: update this deployment's paths, or adopt the new entry from Discover.")
+                    }
+                }
+            } else if d.attention != nil, found?.sha256 == certificate(d.certificateID)?.current?.sha256 {
+                attention = .some(nil)
+            }
+            if case .some(let message) = attention, let message, message != d.attention {
+                log(.error, "\(host.name): deployment needs attention", detail: message)
+            }
             updateDeployment(deploymentID) {
                 $0.lastChecked = Date()
+                if case .some(let a) = attention { $0.attention = a }
                 if let chainComplete { $0.servedChainComplete = chainComplete }
                 $0.deployedSHA256 = found?.sha256
                 $0.deployedNotAfter = found?.notAfter
@@ -614,14 +642,18 @@ public final class AppModel {
             await check(d.id)
         }
         if inventory.settings.autoDeploy {
-            for d in inventory.deployments where needsDeployment(d) {
+            for d in inventory.deployments where needsDeployment(d) && d.attention == nil {
                 await deploy(d.id)
             }
         }
-        let outstanding = inventory.deployments.filter(needsDeployment).count
-        log(outstanding == 0 ? .success : .warning,
+        let blocked = inventory.deployments.filter { $0.enabled && $0.attention != nil }.count
+        let outstanding = inventory.deployments.filter { needsDeployment($0) && $0.attention == nil }.count
+        var problems: [String] = []
+        if outstanding > 0 { problems.append("\(outstanding) deployment(s) still out of date") }
+        if blocked > 0 { problems.append("\(blocked) deployment(s) need attention") }
+        log(problems.isEmpty ? .success : .warning,
             "Rotation pass finished",
-            detail: outstanding == 0 ? "Everything is current" : "\(outstanding) deployment(s) still out of date")
+            detail: problems.isEmpty ? "Everything is current" : problems.joined(separator: "; "))
     }
 
     /// Reads every secret the app owns once, so any Keychain access prompt appears at launch while

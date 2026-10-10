@@ -170,6 +170,9 @@ public struct Deployment: Codable, Identifiable, Hashable, Sendable {
     public var forceRedeploy: Bool = false
     /// Whether the live TLS endpoint sends the intermediates clients need (nil = not checked).
     public var servedChainComplete: Bool?
+    /// Set when the deployment can't work as configured (e.g. the server's config no longer reads its
+    /// files). Automatic deploys skip it until the deployment is edited or a check finds it consistent.
+    public var attention: String?
 
     public init(certificateID: UUID, hostID: UUID, kind: DeploymentKind) {
         self.certificateID = certificateID
@@ -197,6 +200,7 @@ public struct Deployment: Codable, Identifiable, Hashable, Sendable {
         lastError = try c.decodeIfPresent(String.self, forKey: .lastError)
         forceRedeploy = try c.decodeIfPresent(Bool.self, forKey: .forceRedeploy) ?? false
         servedChainComplete = try c.decodeIfPresent(Bool.self, forKey: .servedChainComplete)
+        attention = try c.decodeIfPresent(String.self, forKey: .attention)
     }
 
     public func option(_ key: DeploymentOption) -> String { options[key.rawValue] ?? key.defaultValue }
