@@ -34,6 +34,9 @@ struct CertKeeperApp: App {
                 .task { model.startScheduler() }
         }
         .commands {
+            CommandGroup(replacing: .appInfo) {
+                Button("About CertKeeper") { AboutPanel.show() }
+            }
             CommandMenu("Certificates") {
                 Button("Run Rotation Pass Now") { Task { await model.runMaintenance() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])
@@ -78,5 +81,32 @@ struct MenuBarContent: View {
         }
         Divider()
         Button("Quit") { NSApp.terminate(nil) }
+    }
+}
+
+/// The standard About panel, with a summary of the app. The copyright line comes from
+/// NSHumanReadableCopyright in Info.plist.
+enum AboutPanel {
+    static let summary = """
+    CertKeeper ensures the TLS certificates on your servers and devices are current. It issues \
+    certificates from Let's Encrypt, proving domain ownership through Cloudflare DNS, and installs them \
+    over SSH on nginx, Apache, Proxmox VE, TrueNAS and its apps, UniFi OS, OPNsense, Pi-hole and more.
+
+    An inventory tracks every certificate and where it's deployed, so CertKeeper renews and redeploys \
+    only when needed, and confirms what each service actually serves. Certificates renewed by other \
+    systems can be monitored for expiry. Secrets stay in your macOS Keychain.
+    """
+
+    static func show() {
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        paragraph.paragraphSpacing = 6
+        let credits = NSAttributedString(string: summary, attributes: [
+            .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
+            .foregroundColor: NSColor.labelColor,  // follows light/dark mode
+            .paragraphStyle: paragraph,
+        ])
+        NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
+        NSApp.activate()
     }
 }
