@@ -89,6 +89,12 @@ public struct ManagedCertificate: Codable, Identifiable, Hashable, Sendable {
     public var chainPEM: String?
     public var lastIssued: Date?
     public var lastError: String?
+    /// Monitor only: another system (e.g. UniFi OS's own ACME client) renews this certificate.
+    /// CertKeeper never issues or deploys it; its deployments just watch what the endpoint serves,
+    /// and `current` is the most recently observed certificate.
+    public var external: Bool?
+
+    public var isMonitored: Bool { external == true }
 
     public init(name: String, domains: [String]) {
         self.name = name

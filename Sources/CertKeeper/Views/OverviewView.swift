@@ -49,7 +49,7 @@ struct OverviewView: View {
                         TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1) }
                         TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
                             .width(110)
-                        TableColumn("Status") { c in StatusBadge(status: model.status(of: c)) }.width(170)
+                        TableColumn("Status") { c in StatusBadge(status: model.status(of: c), monitored: c.isMonitored) }.width(170)
                         TableColumn("Deployed") { c in
                             let ds = model.deployments(for: c.id)
                             let current = ds.filter { !model.needsDeployment($0) && $0.enabled }.count

@@ -185,15 +185,25 @@ public final class AppModel {
 
     // MARK: - Renewal policy
 
+    /// Days before expiry to renew — or, for a monitored certificate, to warn that the system renewing
+    /// it seems to have stopped (14 by default, since such systems usually renew around 30).
     public func renewalWindow(for cert: ManagedCertificate) -> Int {
-        cert.renewDaysBeforeExpiry ?? inventory.settings.renewDaysBeforeExpiry
+        cert.renewDaysBeforeExpiry ?? (cert.isMonitored ? Self.defaultMonitorWindow : inventory.settings.renewDaysBeforeExpiry)
     }
+
+    public static let defaultMonitorWindow = 14
 
     public enum CertStatus: Equatable {
         case notIssued, valid(days: Int), renewDue(days: Int), expired, domainsChanged
     }
 
     public func status(of cert: ManagedCertificate) -> CertStatus {
+        if cert.isMonitored {
+            guard let cur = cert.current else { return .notIssued }  // shown as "not checked yet"
+            if cur.isExpired { return .expired }
+            if cur.daysRemaining <= renewalWindow(for: cert) { return .renewDue(days: cur.daysRemaining) }
+            return .valid(days: cur.daysRemaining)
+        }
         guard let cur = cert.current, cert.leafPEM != nil else { return .notIssued }
         if Set(cur.dnsNames.map { $0.lowercased() }) != Set(cert.domains.map { $0.lowercased() }) { return .domainsChanged }
         if cur.isExpired { return .expired }
@@ -202,13 +212,14 @@ public final class AppModel {
     }
 
     public func needsIssuance(_ cert: ManagedCertificate) -> Bool {
+        if cert.isMonitored { return false }
         if case .valid = status(of: cert) { return false }
         return true
     }
 
     /// A deployment is out of date when the service isn't confirmed to be serving the current certificate.
     public func needsDeployment(_ d: Deployment) -> Bool {
-        guard d.enabled, let cert = certificate(d.certificateID), let cur = cert.current else { return false }
+        guard d.enabled, let cert = certificate(d.certificateID), !cert.isMonitored, let cur = cert.current else { return false }
         return d.forceRedeploy || d.deployedSHA256 != cur.sha256
     }
 
@@ -221,12 +232,25 @@ public final class AppModel {
         case outOfDate
         case incompleteChain
         case current
+        // Monitor-only deployments:
+        case notCheckedYet
+        case watching(days: Int)
+        case expiringSoon(days: Int)
+        case expired
     }
 
     public func state(of d: Deployment) -> DeploymentState {
         if !d.enabled { return .disabled }
         if let attention = d.attention { return .attention(attention) }
         if let error = d.lastError { return .error(error) }
+        if let cert = certificate(d.certificateID), cert.isMonitored {
+            guard let notAfter = d.deployedNotAfter else { return .notCheckedYet }
+            let days = Int(floor(notAfter.timeIntervalSinceNow / 86_400))
+            if notAfter < Date() { return .expired }
+            if days <= renewalWindow(for: cert) { return .expiringSoon(days: days) }
+            if d.servedChainComplete == false { return .incompleteChain }
+            return .watching(days: days)
+        }
         if certificate(d.certificateID)?.current == nil { return .awaitingIssuance }
         if needsDeployment(d) { return .outOfDate }
         if d.servedChainComplete == false { return .incompleteChain }
@@ -247,19 +271,25 @@ public final class AppModel {
         let states = deployments(onHost: hostID).map(state(of:)).filter { $0 != .disabled }
         guard !states.isEmpty else { return HostHealth(level: .unmanaged, summary: "No managed deployments") }
         func count(_ match: (DeploymentState) -> Bool) -> Int { states.filter(match).count }
-        let problems = count { if case .attention = $0 { return true }; if case .error = $0 { return true }; return false }
+        let problems = count {
+            switch $0 { case .attention, .error, .expired: return true; default: return false }
+        }
         let outOfDate = count { $0 == .outOfDate }
+        let expiring = count { if case .expiringSoon = $0 { return true }; return false }
         let chain = count { $0 == .incompleteChain }
         let awaiting = count { $0 == .awaitingIssuance }
+        let unchecked = count { $0 == .notCheckedYet }
         let total = states.count
         let noun = total == 1 ? "deployment" : "deployments"
 
         var parts: [String] = []
         if problems > 0 { parts.append("\(problems) need\(problems == 1 ? "s" : "") attention") }
         if outOfDate > 0 { parts.append("\(outOfDate) out of date") }
+        if expiring > 0 { parts.append("\(expiring) monitored expiring soon") }
         if chain > 0 { parts.append("\(chain) with an incomplete chain") }
         if awaiting > 0 { parts.append("\(awaiting) awaiting issuance") }
-        let level: HostHealth.Level = problems > 0 ? .problem : (outOfDate + chain > 0 ? .warning : (awaiting > 0 ? .pending : .current))
+        if unchecked > 0 { parts.append("\(unchecked) not checked yet") }
+        let level: HostHealth.Level = problems > 0 ? .problem : (outOfDate + chain + expiring > 0 ? .warning : (awaiting + unchecked > 0 ? .pending : .current))
         let summary = parts.isEmpty
             ? (total == 1 ? "1 deployment current" : "All \(total) deployments current")
             : "\(parts.joined(separator: ", ")) (of \(total) \(noun))"
@@ -384,7 +414,7 @@ public final class AppModel {
 
     public func deploy(_ deploymentID: UUID) async {
         guard let d = inventory.deployments.first(where: { $0.id == deploymentID }),
-              let cert = certificate(d.certificateID), let host = host(d.hostID),
+              let cert = certificate(d.certificateID), !cert.isMonitored, let host = host(d.hostID),
               !busy.contains(deploymentID) else { return }
         await withBusy(deploymentID) {
             let label = "\(cert.name) → \(host.name) (\(d.kind.displayName))"
@@ -418,6 +448,10 @@ public final class AppModel {
     func performCheck(_ deploymentID: UUID, logResult: Bool) async {
         guard let d = inventory.deployments.first(where: { $0.id == deploymentID }),
               let host = host(d.hostID) else { return }
+        if let cert = certificate(d.certificateID), cert.isMonitored {
+            await checkMonitored(d, cert: cert, host: host, logResult: logResult)
+            return
+        }
         do {
             var found: CertificateSummary?
             var onDisk: CertificateSummary?
@@ -514,6 +548,74 @@ public final class AppModel {
         }
     }
 
+    /// Monitor only: look at what the endpoint serves over TLS (never files on the host — another
+    /// system decides which certificate is live) and warn when it nears expiry.
+    private func checkMonitored(_ d: Deployment, cert: ManagedCertificate, host: ManagedHost, logResult: Bool) async {
+        guard !d.verifyEndpoint.isEmpty else {
+            updateDeployment(d.id) { $0.lastError = "Monitor-only deployments need a TLS endpoint to watch"; $0.lastChecked = Date() }
+            return
+        }
+        var served: TLSProbe.Served?
+        var failure: Error?
+        for attempt in 0..<3 {
+            do { served = try await TLSProbe.fetchServed(endpoint: d.verifyEndpoint); failure = nil; break }
+            catch { failure = error }
+            if attempt < 2 { try? await Task.sleep(for: .seconds(3)) }
+        }
+        guard let served, let leaf = served.chain.first else {
+            let message = "Couldn't reach \(d.verifyEndpoint): \(failure?.localizedDescription ?? "no certificate presented")"
+            if d.lastError != message { log(.warning, "\(host.name): monitor check failed", detail: message) }
+            updateDeployment(d.id) { $0.lastError = message; $0.lastChecked = Date() }
+            return
+        }
+        let window = renewalWindow(for: cert)
+        let previousDays = d.deployedNotAfter.map { Int(floor($0.timeIntervalSinceNow / 86_400)) }
+        updateDeployment(d.id) {
+            $0.lastChecked = Date()
+            $0.lastError = nil
+            $0.deployedSHA256 = leaf.sha256
+            $0.deployedNotAfter = leaf.notAfter
+            if served.exact { $0.servedChainComplete = TLSProbe.chainIsComplete(served.chain) }
+        }
+        updateCertificate(cert.id) { $0.current = leaf; $0.lastError = nil }
+        if leaf.isExpired {
+            log(.error, "\(cert.name) on \(host.name) has expired", detail: "Expired \(leaf.notAfter.formatted()). The system that renews it has stopped.")
+        } else if leaf.daysRemaining <= window, previousDays.map({ $0 > window }) ?? true {
+            log(.warning, "\(cert.name) on \(host.name) expires in \(leaf.daysRemaining) days",
+                detail: "It's monitored, not renewed by CertKeeper. The system that renews it (e.g. the device's own ACME client) seems to have stopped.")
+        } else if logResult {
+            log(.success, "\(host.name) serves \(cert.name) (monitored)", detail: "Expires \(leaf.notAfter.formatted()) · issued by \(leaf.issuer)")
+        }
+    }
+
+    /// Switches a certificate between managed (CertKeeper issues and deploys it) and monitor only.
+    /// Going monitor-only discards CertKeeper's issued copy and its private key.
+    public func setMonitorOnly(_ certID: UUID, _ monitored: Bool) {
+        guard let cert = certificate(certID), cert.isMonitored != monitored else { return }
+        updateCertificate(certID) {
+            $0.external = monitored ? true : nil
+            $0.leafPEM = nil
+            $0.chainPEM = nil
+            $0.current = nil
+            $0.lastIssued = nil
+            $0.lastError = nil
+        }
+        if monitored { secrets.delete(.certificateKey(certID)) }
+        for d in deployments(for: certID) {
+            updateDeployment(d.id) {
+                $0.forceRedeploy = false
+                $0.attention = nil
+                $0.lastError = nil
+                $0.deployedSHA256 = nil
+                $0.deployedNotAfter = nil
+                $0.servedChainComplete = nil
+            }
+        }
+        log(.info, monitored ? "\(cert.name) is now monitor only" : "\(cert.name) is now managed by CertKeeper",
+            detail: monitored ? "CertKeeper won't issue or deploy it; its deployments watch what each endpoint serves."
+                              : "CertKeeper will issue and deploy it on the next rotation pass.")
+    }
+
     // MARK: - Discovery
 
     public func discover(_ hostID: UUID) async {
@@ -551,6 +653,8 @@ public final class AppModel {
         case automatic
         case existing(UUID)
         case new
+        /// Watch this endpoint's certificate without managing it (see `ManagedCertificate.external`).
+        case monitor
     }
 
     /// How well a managed certificate fits a discovered endpoint's names.
@@ -602,7 +706,7 @@ public final class AppModel {
     public func adoptionCandidates(for endpoint: DiscoveredEndpoint) -> [ManagedCertificate] {
         let names = Self.dnsNames(of: endpoint)
         guard !names.isEmpty else { return [] }
-        return inventory.certificates
+        return inventory.certificates.filter { !$0.isMonitored }
             .map { ($0, coverage(of: $0, for: names)) }
             .filter { if case .missing = $0.1 { return false }; return true }
             .sorted { $0.1 < $1.1 }
@@ -626,6 +730,18 @@ public final class AppModel {
             certID = id
         case .automatic where automaticAdoptionTarget(for: endpoint) != nil:
             certID = automaticAdoptionTarget(for: endpoint)!.id
+        case .monitor:
+            if let existing = inventory.certificates.first(where: {
+                $0.isMonitored && Set($0.domains.map { $0.lowercased() }) == Set(names.map { $0.lowercased() }) && !names.isEmpty
+            }) {
+                certID = existing.id
+            } else {
+                var c = ManagedCertificate(name: names.first ?? endpoint.label, domains: names)
+                c.external = true
+                c.current = endpoint.summary
+                addCertificate(c)
+                certID = c.id
+            }
         default:
             let c = ManagedCertificate(name: names.first ?? endpoint.label, domains: names)
             addCertificate(c)
@@ -718,6 +834,10 @@ public final class AppModel {
         var problems: [String] = []
         if outstanding > 0 { problems.append("\(outstanding) deployment(s) still out of date") }
         if blocked > 0 { problems.append("\(blocked) deployment(s) need attention") }
+        let monitoredTrouble = inventory.deployments.filter {
+            switch state(of: $0) { case .expiringSoon, .expired: return true; default: return false }
+        }.count
+        if monitoredTrouble > 0 { problems.append("\(monitoredTrouble) monitored certificate(s) expiring or expired") }
         log(problems.isEmpty ? .success : .warning,
             "Rotation pass finished",
             detail: problems.isEmpty ? "Everything is current" : problems.joined(separator: "; "))

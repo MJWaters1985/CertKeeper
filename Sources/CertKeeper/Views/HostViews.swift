@@ -160,6 +160,9 @@ struct AdoptControl: View {
                 Button("New certificate for \(names.joined(separator: ", "))") {
                     model.adopt(endpoint, hostID: hostID, target: .new)
                 }
+                Button("Monitor only (renewed by something else)") {
+                    model.adopt(endpoint, hostID: hostID, target: .monitor)
+                }
             } label: {
                 Text("Adopt")
             } primaryAction: {

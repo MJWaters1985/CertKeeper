@@ -25,7 +25,7 @@ struct ContentView: View {
                         HStack {
                             Label(cert.name, systemImage: "checkmark.seal")
                             Spacer()
-                            StatusBadge(status: model.status(of: cert), compact: true)
+                            StatusBadge(status: model.status(of: cert), compact: true, monitored: cert.isMonitored)
                         }
                         .tag(SidebarItem.certificate(cert.id))
                         .contextMenu {
@@ -92,12 +92,13 @@ struct ContentView: View {
 struct StatusBadge: View {
     let status: AppModel.CertStatus
     var compact = false
+    var monitored = false
 
     var body: some View {
         let (text, color): (String, Color) = switch status {
-        case .notIssued: ("Not issued", .secondary)
-        case .valid(let d): (compact ? "\(d)d" : "Valid · \(d) days", .green)
-        case .renewDue(let d): (compact ? "\(d)d" : "Renewal due · \(d) days", .orange)
+        case .notIssued: (monitored ? "Not checked yet" : "Not issued", .secondary)
+        case .valid(let d): (compact ? "\(d)d" : (monitored ? "Monitored · \(d) days" : "Valid · \(d) days"), .green)
+        case .renewDue(let d): (compact ? "\(d)d" : (monitored ? "Expiring · \(d) days" : "Renewal due · \(d) days"), .orange)
         case .expired: ("Expired", .red)
         case .domainsChanged: ("Names changed", .orange)
         }
@@ -135,6 +136,16 @@ struct DeploymentStateBadge: View {
                     .help("\(deployment.verifyEndpoint) doesn't send the intermediate certificate. Browsers often cope, but curl, apps and some phones will reject it. Try Deploy Now.")
             case .current:
                 Label("Current", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            case .notCheckedYet:
+                Text("Not checked yet").font(.caption).foregroundStyle(.secondary)
+            case .watching(let days):
+                Label("Monitored · \(days)d", systemImage: "eye.fill").font(.caption).foregroundStyle(.green)
+                    .help("Renewed by another system; CertKeeper watches what \(deployment.verifyEndpoint) serves.")
+            case .expiringSoon(let days):
+                Label("Expires in \(days)d", systemImage: "eye.trianglebadge.exclamationmark.fill").font(.caption).foregroundStyle(.orange)
+                    .help("Monitored, not renewed by CertKeeper. The system that renews it seems to have stopped.")
+            case .expired:
+                Label("Expired", systemImage: "xmark.octagon.fill").font(.caption).foregroundStyle(.red)
             }
         }
     }

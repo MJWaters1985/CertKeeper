@@ -83,6 +83,8 @@ struct FakeUOS {
         let crt = try String(contentsOf: uos.dir.appendingPathComponent("unifi-core.crt"), encoding: .utf8)
         #expect(crt.contains(c.leafPEM!.trimmingCharacters(in: .whitespacesAndNewlines)))
         #expect(CertCrypto.keyMatches(certPEM: crt, keyPEM: try String(contentsOf: uos.dir.appendingPathComponent("unifi-core.key"), encoding: .utf8)))
+        let leftovers = try FileManager.default.contentsOfDirectory(atPath: uos.dir.path).filter { $0.contains("certkeeper") }
+        #expect(leftovers.isEmpty, "no backups left in the container's folder")
         _ = key
     }
 

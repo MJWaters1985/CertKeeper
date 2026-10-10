@@ -8,6 +8,7 @@ struct CertificateDetailView: View {
     @State private var domainsText = ""
     @State private var editingDeployment: Deployment?
     @State private var confirmIssue = false
+    @State private var confirmMonitor = false
 
     private var index: Int? { model.inventory.certificates.firstIndex { $0.id == certID } }
 
@@ -17,7 +18,7 @@ struct CertificateDetailView: View {
             let cert = model.inventory.certificates[i]
             Form {
                 Section {
-                    LabeledContent("Status") { StatusBadge(status: model.status(of: cert)) }
+                    LabeledContent("Status") { StatusBadge(status: model.status(of: cert), monitored: cert.isMonitored) }
                     if let cur = cert.current {
                         LabeledContent("Expires", value: cur.notAfter.formatted(date: .long, time: .shortened))
                         LabeledContent("Issued by", value: cur.issuer)
@@ -43,15 +44,28 @@ struct CertificateDetailView: View {
                             Button("Apply", action: applyDomains).disabled(parse(domainsText) == cert.domains)
                         }
                     }
-                    Picker("Key type", selection: $model.inventory.certificates[i].keyAlgorithm) {
-                        ForEach(KeyAlgorithm.allCases) { Text($0.rawValue).tag($0) }
+                    VStack(alignment: .leading) {
+                        Toggle("Monitor only", isOn: Binding(
+                            get: { cert.isMonitored },
+                            set: { on in
+                                if on && cert.leafPEM != nil { confirmMonitor = true } else { model.setMonitorOnly(certID, on) }
+                            }))
+                        Text(cert.isMonitored
+                             ? "Renewed by another system (e.g. the device's own ACME client). CertKeeper never issues or deploys it; it watches what each endpoint serves and warns before it expires."
+                             : "CertKeeper issues, renews and deploys this certificate.")
+                            .font(.caption).foregroundStyle(.secondary)
                     }
-                    Toggle("Renew automatically", isOn: $model.inventory.certificates[i].autoRenew)
+                    if !cert.isMonitored {
+                        Picker("Key type", selection: $model.inventory.certificates[i].keyAlgorithm) {
+                            ForEach(KeyAlgorithm.allCases) { Text($0.rawValue).tag($0) }
+                        }
+                        Toggle("Renew automatically", isOn: $model.inventory.certificates[i].autoRenew)
+                    }
                     Stepper(value: Binding(
-                        get: { cert.renewDaysBeforeExpiry ?? model.inventory.settings.renewDaysBeforeExpiry },
+                        get: { model.renewalWindow(for: cert) },
                         set: { model.inventory.certificates[i].renewDaysBeforeExpiry = $0 }
                     ), in: 1...60) {
-                        LabeledContent("Renew when fewer than",
+                        LabeledContent(cert.isMonitored ? "Warn when fewer than" : "Renew when fewer than",
                                        value: "\(model.renewalWindow(for: cert)) days remain\(cert.renewDaysBeforeExpiry == nil ? " (default)" : "")")
                     }
                 }
@@ -82,6 +96,11 @@ struct CertificateDetailView: View {
             .toolbar {
                 ToolbarItemGroup {
                     if model.busy.contains(certID) { ProgressView().controlSize(.small) }
+                    if cert.isMonitored {
+                        Button("Check Now", systemImage: "eye") {
+                            Task { for d in model.deployments(for: certID) where d.enabled { await model.check(d.id, logResult: true) } }
+                        }
+                    } else {
                     Button(cert.current == nil ? "Issue" : "Renew Now", systemImage: "arrow.triangle.2.circlepath") {
                         if model.needsIssuance(cert) { Task { await model.issue(certID) } } else { confirmIssue = true }
                     }
@@ -92,7 +111,13 @@ struct CertificateDetailView: View {
                     .disabled(cert.current == nil)
                     Button("Export…", systemImage: "square.and.arrow.down") { export(cert) }
                         .disabled(cert.current == nil)
+                    }
                 }
+            }
+            .confirmationDialog("Switch \(cert.name) to monitor only?", isPresented: $confirmMonitor) {
+                Button("Monitor Only", role: .destructive) { model.setMonitorOnly(certID, true) }
+            } message: {
+                Text("CertKeeper will stop renewing and deploying it, and discard its issued copy and private key. Its deployments will just watch what each endpoint serves. Nothing changes on your hosts.")
             }
             .confirmationDialog("This certificate is still valid for \(cert.current?.daysRemaining ?? 0) days.",
                                 isPresented: $confirmIssue) {
@@ -173,8 +198,10 @@ struct DeploymentRow: View {
             Spacer()
             DeploymentStateBadge(deployment: deployment)
             Menu {
-                Button("Deploy Now") { Task { await model.deploy(deployment.id) } }
-                    .disabled(cert?.current == nil)
+                if cert?.isMonitored != true {
+                    Button("Deploy Now") { Task { await model.deploy(deployment.id) } }
+                        .disabled(cert?.current == nil)
+                }
                 Button("Check What's Live") { Task { await model.check(deployment.id, logResult: true) } }
                 Button("Edit…", action: onEdit)
                 Divider()

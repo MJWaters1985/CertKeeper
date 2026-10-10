@@ -91,15 +91,26 @@ public enum DeployScripts {
         # ck_install SRC DST MODE — replace DST's contents in place (keeping its owner, mode and ACL)
         # after backing it up. Never needs to change permissions on an existing file, so it also works
         # on ACL-managed datasets (e.g. TrueNAS SMB shares) where chmod is refused even for root.
+        # Backups sit next to the file, or in $CK_BACKUP_DIR when a template sets it (e.g. when the
+        # folder belongs to a container that chowns everything in it at startup).
+        ck_bak() {
+          if [ -n "${CK_BACKUP_DIR:-}" ]; then
+            mkdir -p "$CK_BACKUP_DIR" && chmod 700 "$CK_BACKUP_DIR"
+            printf '%s/%s' "$CK_BACKUP_DIR" "$(printf '%s' "$1" | tr / _)"
+          else
+            printf '%s' "$1"
+          fi
+        }
+
         ck_install() {
           [ -n "$2" ] || return 0
           if [ -f "$2" ]; then
             # Plain copy: the backup is root-only where modes apply (umask 077) or inherits the directory's ACL.
-            cat "$2" > "$2.certkeeper-$STAMP.bak"
+            cat "$2" > "$(ck_bak "$2").certkeeper-$STAMP.bak"
             CK_BACKUPS="$CK_BACKUPS $2"
             cat "$1" > "$2"
             # keep the three newest backups
-            ls -1t "$2".certkeeper-*.bak 2>/dev/null | tail -n +4 | while read -r old; do rm -f "$old"; done
+            ls -1t "$(ck_bak "$2")".certkeeper-*.bak 2>/dev/null | tail -n +4 | while read -r old; do rm -f "$old"; done
           else
             mkdir -p "$(dirname "$2")"
             cat "$1" > "$2"
@@ -124,7 +135,7 @@ public enum DeployScripts {
         ck_midclt_job() { ck_midclt_job_flag; midclt call "$CK_JOB_FLAG" "$@"; }
 
         ck_rollback() {
-          for f in $CK_BACKUPS; do cat "$f.certkeeper-$STAMP.bak" > "$f" && rm -f "$f.certkeeper-$STAMP.bak"; echo "restored $f" >&2; done
+          for f in $CK_BACKUPS; do cat "$(ck_bak "$f").certkeeper-$STAMP.bak" > "$f" && rm -f "$(ck_bak "$f").certkeeper-$STAMP.bak"; echo "restored $f" >&2; done
           for f in $CK_NEW; do rm -f "$f"; done
         }
 
@@ -349,6 +360,9 @@ public enum DeployScripts {
     fi
     [ -n "$UNIFI_DIR" ] && [ -f "$UNIFI_DIR/unifi-core.crt" ] || { echo "Could not find unifi-core.crt (looked in ${UNIFI_DIR:-the usual places})" >&2; exit 1; }
     echo "using $UNIFI_DIR"
+    # UniFi OS Server's startup chowns everything in this folder and fails on root-owned files, so
+    # keep CertKeeper's backups on the host instead.
+    case "$UNIFI_DIR" in */containers/storage/volumes/*) CK_BACKUP_DIR="${CK_ROOT:-}/var/backups/certkeeper" ;; esac
     # In-place writes keep the files' owner — inside the container that's unifi-core's (sub)uid.
     ck_install "$FULLCHAIN" "$UNIFI_DIR/unifi-core.crt" 644
     ck_install "$KEY" "$UNIFI_DIR/unifi-core.key" 600
