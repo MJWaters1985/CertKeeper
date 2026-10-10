@@ -210,6 +210,60 @@ public final class AppModel {
         return d.forceRedeploy || d.deployedSHA256 != cur.sha256
     }
 
+    /// One deployment's state, most urgent first. Shared by the deployment badges and the host indicators.
+    public enum DeploymentState: Equatable {
+        case disabled
+        case attention(String)
+        case error(String)
+        case awaitingIssuance
+        case outOfDate
+        case incompleteChain
+        case current
+    }
+
+    public func state(of d: Deployment) -> DeploymentState {
+        if !d.enabled { return .disabled }
+        if let attention = d.attention { return .attention(attention) }
+        if let error = d.lastError { return .error(error) }
+        if certificate(d.certificateID)?.current == nil { return .awaitingIssuance }
+        if needsDeployment(d) { return .outOfDate }
+        if d.servedChainComplete == false { return .incompleteChain }
+        return .current
+    }
+
+    /// Roll-up of a host's enabled deployments for the sidebar.
+    public struct HostHealth: Equatable {
+        public enum Level: Int, Comparable {
+            case unmanaged, current, pending, warning, problem
+            public static func < (a: Level, b: Level) -> Bool { a.rawValue < b.rawValue }
+        }
+        public var level: Level
+        public var summary: String
+    }
+
+    public func health(ofHost hostID: UUID) -> HostHealth {
+        let states = deployments(onHost: hostID).map(state(of:)).filter { $0 != .disabled }
+        guard !states.isEmpty else { return HostHealth(level: .unmanaged, summary: "No managed deployments") }
+        func count(_ match: (DeploymentState) -> Bool) -> Int { states.filter(match).count }
+        let problems = count { if case .attention = $0 { return true }; if case .error = $0 { return true }; return false }
+        let outOfDate = count { $0 == .outOfDate }
+        let chain = count { $0 == .incompleteChain }
+        let awaiting = count { $0 == .awaitingIssuance }
+        let total = states.count
+        let noun = total == 1 ? "deployment" : "deployments"
+
+        var parts: [String] = []
+        if problems > 0 { parts.append("\(problems) need\(problems == 1 ? "s" : "") attention") }
+        if outOfDate > 0 { parts.append("\(outOfDate) out of date") }
+        if chain > 0 { parts.append("\(chain) with an incomplete chain") }
+        if awaiting > 0 { parts.append("\(awaiting) awaiting issuance") }
+        let level: HostHealth.Level = problems > 0 ? .problem : (outOfDate + chain > 0 ? .warning : (awaiting > 0 ? .pending : .current))
+        let summary = parts.isEmpty
+            ? (total == 1 ? "1 deployment current" : "All \(total) deployments current")
+            : "\(parts.joined(separator: ", ")) (of \(total) \(noun))"
+        return HostHealth(level: level, summary: summary)
+    }
+
     // MARK: - Issuance
 
     public func issue(_ certID: UUID) async {
@@ -428,6 +482,7 @@ public final class AppModel {
             }
             updateDeployment(deploymentID) {
                 $0.lastChecked = Date()
+                $0.lastError = nil  // a successful check supersedes an earlier failure
                 if case .some(let a) = attention { $0.attention = a }
                 if let chainComplete { $0.servedChainComplete = chainComplete }
                 $0.deployedSHA256 = found?.sha256

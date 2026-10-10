@@ -35,7 +35,11 @@ struct ContentView: View {
                 }
                 Section("Hosts") {
                     ForEach(model.inventory.hosts) { host in
-                        Label(host.name, systemImage: "server.rack")
+                        HStack {
+                            Label(host.name, systemImage: "server.rack")
+                            Spacer()
+                            HostHealthIndicator(hostID: host.id)
+                        }
                             .tag(SidebarItem.host(host.id))
                             .contextMenu {
                                 Button("Delete", role: .destructive) { model.deleteHost(host.id) }
@@ -112,24 +116,59 @@ struct DeploymentStateBadge: View {
     var body: some View {
         if model.busy.contains(deployment.id) {
             ProgressView().controlSize(.small)
-        } else if !deployment.enabled {
-            Text("Disabled").font(.caption).foregroundStyle(.secondary)
-        } else if let attention = deployment.attention {
-            Label("Needs attention", systemImage: "exclamationmark.octagon.fill").font(.caption).foregroundStyle(.red)
-                .help(attention)
-        } else if deployment.lastError != nil {
-            Label("Error", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red)
-                .help(deployment.lastError ?? "")
-        } else if model.certificate(deployment.certificateID)?.current == nil {
-            Text("Awaiting issuance").font(.caption).foregroundStyle(.secondary)
-        } else if model.needsDeployment(deployment) {
-            Label("Out of date", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.orange)
-        } else if deployment.servedChainComplete == false {
-            Label("Incomplete chain", systemImage: "link.badge.plus").font(.caption).foregroundStyle(.orange)
-                .help("\(deployment.verifyEndpoint) doesn't send the intermediate certificate. Browsers often cope, but curl, apps and some phones will reject it. Try Deploy Now.")
         } else {
-            Label("Current", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            switch model.state(of: deployment) {
+            case .disabled:
+                Text("Disabled").font(.caption).foregroundStyle(.secondary)
+            case .attention(let message):
+                Label("Needs attention", systemImage: "exclamationmark.octagon.fill").font(.caption).foregroundStyle(.red)
+                    .help(message)
+            case .error(let message):
+                Label("Error", systemImage: "exclamationmark.triangle.fill").font(.caption).foregroundStyle(.red)
+                    .help(message)
+            case .awaitingIssuance:
+                Text("Awaiting issuance").font(.caption).foregroundStyle(.secondary)
+            case .outOfDate:
+                Label("Out of date", systemImage: "arrow.triangle.2.circlepath").font(.caption).foregroundStyle(.orange)
+            case .incompleteChain:
+                Label("Incomplete chain", systemImage: "link.badge.plus").font(.caption).foregroundStyle(.orange)
+                    .help("\(deployment.verifyEndpoint) doesn't send the intermediate certificate. Browsers often cope, but curl, apps and some phones will reject it. Try Deploy Now.")
+            case .current:
+                Label("Current", systemImage: "checkmark.circle.fill").font(.caption).foregroundStyle(.green)
+            }
         }
+    }
+}
+
+/// Sidebar indicator: whether every managed deployment on a host is current.
+struct HostHealthIndicator: View {
+    @Environment(AppModel.self) private var model
+    let hostID: UUID
+
+    var body: some View {
+        let busy = model.busy.contains(hostID) || model.deployments(onHost: hostID).contains { model.busy.contains($0.id) }
+        let health = model.health(ofHost: hostID)
+        Group {
+            if busy {
+                ProgressView().controlSize(.mini)
+            } else {
+                switch health.level {
+                case .unmanaged:
+                    Image(systemName: "minus.circle").foregroundStyle(.tertiary)
+                case .current:
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                case .pending:
+                    Image(systemName: "clock.fill").foregroundStyle(.secondary)
+                case .warning:
+                    Image(systemName: "arrow.triangle.2.circlepath.circle.fill").foregroundStyle(.orange)
+                case .problem:
+                    Image(systemName: "exclamationmark.circle.fill").foregroundStyle(.red)
+                }
+            }
+        }
+        .font(.callout)
+        .help(busy ? "Working…" : health.summary)
+        .accessibilityLabel(busy ? "Working" : health.summary)
     }
 }
 
