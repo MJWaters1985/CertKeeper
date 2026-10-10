@@ -21,7 +21,7 @@ struct ContentView: View {
                 Label("Activity", systemImage: "list.bullet.rectangle").tag(SidebarItem.activity)
 
                 Section("Certificates") {
-                    ForEach(model.inventory.certificates) { cert in
+                    ForEach(model.sortedCertificates) { cert in
                         HStack {
                             Label(cert.name, systemImage: "checkmark.seal")
                             Spacer()
@@ -34,7 +34,7 @@ struct ContentView: View {
                     }
                 }
                 Section("Hosts") {
-                    ForEach(model.inventory.hosts) { host in
+                    ForEach(model.sortedHosts) { host in
                         HStack {
                             Label(host.name, systemImage: "server.rack")
                             Spacer()

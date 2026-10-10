@@ -129,6 +129,24 @@ public final class AppModel {
 
     // MARK: - Lookup helpers
 
+    /// Name order as Finder sorts: case-insensitive, numbers compared numerically ("kvm2" before "kvm10").
+    static func byName(_ a: String, _ b: String) -> Bool {
+        a.localizedStandardCompare(b) == .orderedAscending
+    }
+
+    /// Certificates and hosts in alphabetical order, for the sidebar. Ties keep their stored order.
+    public var sortedCertificates: [ManagedCertificate] {
+        inventory.certificates.enumerated()
+            .sorted { Self.byName($0.element.name, $1.element.name) || ($0.element.name.localizedStandardCompare($1.element.name) == .orderedSame && $0.offset < $1.offset) }
+            .map(\.element)
+    }
+
+    public var sortedHosts: [ManagedHost] {
+        inventory.hosts.enumerated()
+            .sorted { Self.byName($0.element.name, $1.element.name) || ($0.element.name.localizedStandardCompare($1.element.name) == .orderedSame && $0.offset < $1.offset) }
+            .map(\.element)
+    }
+
     public func host(_ id: UUID) -> ManagedHost? { inventory.hosts.first { $0.id == id } }
     public func certificate(_ id: UUID) -> ManagedCertificate? { inventory.certificates.first { $0.id == id } }
     public func deployments(for certID: UUID) -> [Deployment] { inventory.deployments.filter { $0.certificateID == certID } }
