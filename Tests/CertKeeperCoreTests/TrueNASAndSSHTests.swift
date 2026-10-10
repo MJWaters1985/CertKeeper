@@ -105,7 +105,7 @@ struct FakeTrueNAS {
         let input = Pipe(), output = Pipe(), err = Pipe()
         p.standardInput = input; p.standardOutput = output; p.standardError = err
         try p.run()
-        input.fileHandleForWriting.write(Data(script.utf8))
+        SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
         try input.fileHandleForWriting.close()
         let out = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)

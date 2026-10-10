@@ -55,7 +55,7 @@ public enum DeployScripts {
         }()
         let slug = slug(for: certificate)
         let body = deployment.scriptOverride ?? template(for: deployment.kind)
-        let knownOptions: [DeploymentOption] = [.truenasUI, .truenasApps, .restartTarget, .reloadCommand, .fileOwner, .certFormat, .pfxPassword, .piholeSetDomain, .nginxConf, .nginxPrefix]
+        let knownOptions: [DeploymentOption] = [.truenasUI, .truenasApps, .restartTarget, .reloadCommand, .fileOwner, .certFormat, .pfxPassword, .piholeSetDomain, .nginxConf, .nginxPrefix, .unifiDir]
         var optionLines = knownOptions.map { "\($0.envName)=\(shellQuote(deployment.option($0)))" }
         for (key, value) in deployment.options.sorted(by: { $0.key < $1.key })
         where DeploymentOption(rawValue: key) == nil && key.allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) {
@@ -334,31 +334,61 @@ public enum DeployScripts {
     """#
 
     static let unifi = #"""
-    # UniFi OS consoles (UDM/UCG/UNVR/CloudKey Gen2+) keep the web certificate in
-    # /data/unifi-core/config. On UniFi OS Server the path depends on the install —
-    # set UNIFI_DIR below if auto-detection picks the wrong place.
-    UNIFI_DIR=""
+    # UniFi OS consoles (UDM/UCG/UNVR/CloudKey Gen2+) keep the web certificate in /data/unifi-core/config.
+    # UniFi OS Server runs UniFi OS in a podman container (rootless, as user uosserver) with the same
+    # files in its data volume. Discovery records the folder in $CK_OPT_UNIFI_DIR.
+    UNIFI_DIR="$CK_OPT_UNIFI_DIR"
     if [ -z "$UNIFI_DIR" ]; then
-      for d in /data/unifi-core/config /mnt/data/unifi-core/config \
-               $(find /data /mnt /var/lib /opt /srv -maxdepth 6 -type f -name unifi-core.crt 2>/dev/null | head -n 5 | xargs -n1 dirname 2>/dev/null); do
+      for d in "${CK_ROOT:-}"/data/unifi-core/config "${CK_ROOT:-}"/mnt/data/unifi-core/config \
+               "${CK_ROOT:-}"/home/*/.local/share/containers/storage/volumes/*/_data/unifi-core/config \
+               "${CK_ROOT:-}"/var/lib/containers/storage/volumes/*/_data/unifi-core/config \
+               $(find "${CK_ROOT:-}"/data "${CK_ROOT:-}"/mnt "${CK_ROOT:-}"/var/lib "${CK_ROOT:-}"/opt "${CK_ROOT:-}"/srv \
+                   -maxdepth 6 -type f -name unifi-core.crt 2>/dev/null | head -n 5 | xargs -n1 dirname 2>/dev/null); do
         if [ -f "$d/unifi-core.crt" ]; then UNIFI_DIR=$d; break; fi
       done
     fi
-    [ -n "$UNIFI_DIR" ] || { echo "Could not find unifi-core.crt; set UNIFI_DIR in the script" >&2; exit 1; }
+    [ -n "$UNIFI_DIR" ] && [ -f "$UNIFI_DIR/unifi-core.crt" ] || { echo "Could not find unifi-core.crt (looked in ${UNIFI_DIR:-the usual places})" >&2; exit 1; }
     echo "using $UNIFI_DIR"
+    # In-place writes keep the files' owner — inside the container that's unifi-core's (sub)uid.
     ck_install "$FULLCHAIN" "$UNIFI_DIR/unifi-core.crt" 644
     ck_install "$KEY" "$UNIFI_DIR/unifi-core.key" 600
 
-    if ck_have systemctl && systemctl list-unit-files 2>/dev/null | grep -q '^unifi-core'; then
-      systemctl restart unifi-core
-    elif ck_have unifi-os; then
-      unifi-os restart
-    elif ck_have podman && podman ps --format '{{.Names}}' 2>/dev/null | grep -qx uosserver; then
-      podman exec uosserver systemctl restart unifi-core
-    else
-      echo "Installed, but could not determine how to restart unifi-core — restart it manually." >&2
-    fi
-    echo "unifi-core restarted"
+    case "$UNIFI_DIR" in
+      */containers/storage/volumes/*)
+        # UniFi OS Server: restart unifi-core inside the container (quick); if that isn't possible,
+        # restart the whole uosserver service (slower, always works).
+        case "$UNIFI_DIR" in
+          */.local/share/containers/*)
+            PODMAN_HOME=${UNIFI_DIR%%/.local/share/containers/*}
+            PODMAN_USER=$(stat -c %U "$PODMAN_HOME" 2>/dev/null || stat -f %Su "$PODMAN_HOME") ;;
+          *) PODMAN_USER=root ;;
+        esac
+        uos_podman() {
+          if [ "$PODMAN_USER" = root ]; then podman "$@"
+          else (cd / && runuser -u "$PODMAN_USER" -- env XDG_RUNTIME_DIR="/run/user/$(id -u "$PODMAN_USER")" podman "$@"); fi
+        }
+        if uos_podman exec uosserver systemctl restart unifi-core >/dev/null 2>&1; then
+          echo "restarted unifi-core inside the uosserver container"
+        elif ck_have systemctl && systemctl cat uosserver.service >/dev/null 2>&1; then
+          systemctl restart uosserver
+          echo "restarted the uosserver service (UniFi OS Server); the UI may take a minute to return"
+        else
+          echo "Installed, but could not restart UniFi OS Server — restart the uosserver service manually." >&2
+          exit 1
+        fi
+        ;;
+      *)
+        if ck_have systemctl && systemctl list-unit-files 2>/dev/null | grep -q '^unifi-core'; then
+          systemctl restart unifi-core
+        elif ck_have unifi-os; then
+          unifi-os restart
+        else
+          echo "Installed, but could not determine how to restart unifi-core — restart it manually." >&2
+          exit 1
+        fi
+        echo "unifi-core restarted"
+        ;;
+    esac
     """#
 
     static let opnsense = #"""

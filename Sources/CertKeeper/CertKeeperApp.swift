@@ -13,6 +13,7 @@ enum Entry {
             FileHandle.standardOutput.write(Data((password + "\n").utf8))
             exit(0)
         }
+        SSHRunner.ignoreSIGPIPE()
         CertKeeperApp.main()
     }
 }

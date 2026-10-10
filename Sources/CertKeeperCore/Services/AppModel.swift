@@ -442,7 +442,9 @@ public final class AppModel {
             if !d.verifyEndpoint.isEmpty {
                 var probe: TLSProbe.Served?
                 var probeError: Error?
-                for attempt in 0..<4 {
+                // UniFi OS Server can take a minute to come back after a full service restart.
+                let attempts = d.kind == .unifiOS ? 12 : 4
+                for attempt in 0..<attempts {
                     do {
                         probe = try await TLSProbe.fetchServed(endpoint: d.verifyEndpoint)
                         probeError = nil
@@ -450,7 +452,7 @@ public final class AppModel {
                         probeError = error
                     }
                     if probe?.chain.first?.sha256 == certificate(d.certificateID)?.current?.sha256 { break }
-                    if attempt < 3 { try? await Task.sleep(for: .seconds(5)) }
+                    if attempt < attempts - 1 { try? await Task.sleep(for: .seconds(5)) }
                 }
                 if probe == nil, let probeError {
                     log(.warning, "Couldn't check what \(d.verifyEndpoint) is serving",

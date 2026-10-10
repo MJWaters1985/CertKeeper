@@ -252,6 +252,13 @@ struct DeploymentEditor: View {
                     }
                     TextField("Reload command (optional)", text: option(.reloadCommand), prompt: Text("overrides the restart, e.g. docker exec proxy nginx -s reload"))
                 }
+                if deployment.kind == .unifiOS {
+                    VStack(alignment: .leading) {
+                        TextField("unifi-core folder", text: option(.unifiDir), prompt: Text("Leave empty to auto-detect"))
+                        Text("Holds unifi-core.crt and .key. On UniFi OS Server it's inside the uosserver podman volume; Discover fills it in.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if deployment.kind == .nginx {
                     VStack(alignment: .leading) {
                         TextField("nginx config (-c)", text: option(.nginxConf), prompt: Text("Leave empty for the system nginx"))
@@ -339,7 +346,7 @@ struct DeploymentEditor: View {
         case .apache: "Backs up and replaces the files, runs apachectl -t (rolling back on failure), then reloads Apache."
         case .proxmox: "Installs as the node's custom certificate with pvenode cert set and restarts pveproxy."
         case .truenas: "Imports through midclt, assigns it to the web UI and/or catalog apps (apps still on an older copy are updated automatically), then deletes old copies nothing uses. Requires root or sudo."
-        case .unifiOS: "Replaces unifi-core.crt/.key (auto-detected under /data/unifi-core/config) and restarts unifi-core."
+        case .unifiOS: "Replaces unifi-core.crt/.key and restarts unifi-core. On UniFi OS Server it restarts unifi-core inside the container, or the whole uosserver service if that isn't possible."
         case .opnsense: "Imports into System › Trust (reusing the previous CertKeeper entry), assigns it to the web GUI and restarts it."
         case .pihole: "Writes the key and certificate chain into Pi-hole's TLS file, optionally sets webserver.domain, then restarts pihole-FTL (or the container)."
         case .containerApp: "Writes the certificate files (or a .pfx) the app reads, then restarts it: a systemd unit, TrueNAS app, Docker container or Compose project."

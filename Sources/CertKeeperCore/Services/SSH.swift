@@ -27,6 +27,11 @@ public struct SSHRunner: Sendable {
     /// Looks up a host's stored password. Injectable for tests.
     public var passwordLookup: @Sendable (UUID) -> String? = { Keychain.get(.hostPassword($0)) }
 
+    /// Writing to a pipe whose reader has exited raises SIGPIPE, which kills the process by default.
+    /// A remote script that exits early (e.g. a failed precondition) closes ssh's stdin while a large
+    /// script is still being written, so processes driving SSHRunner must ignore it. Idempotent.
+    public static func ignoreSIGPIPE() { signal(SIGPIPE, SIG_IGN) }
+
     public init(askpassPath: String? = nil) {
         self.askpassPath = askpassPath
     }
@@ -154,7 +159,9 @@ public struct SSHRunner: Sendable {
                 return
             }
             DispatchQueue.global().async {
-                inPipe.fileHandleForWriting.write(Data(stdin.utf8))
+                // If the remote side exits before reading everything, this fails with EPIPE rather than
+                // crashing, provided SIGPIPE is ignored (see SSHRunner.ignoreSIGPIPE).
+                try? inPipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
                 try? inPipe.fileHandleForWriting.close()
             }
             DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {

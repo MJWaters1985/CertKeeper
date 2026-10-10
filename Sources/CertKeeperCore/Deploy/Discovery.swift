@@ -405,12 +405,20 @@ public enum Discovery {
     PY
     fi
 
-    # ---- UniFi OS ----
-    for d in /data/unifi-core/config /mnt/data/unifi-core/config \
-             $(find /data /mnt /var/lib /opt /srv -maxdepth 6 -type f -name unifi-core.crt 2>/dev/null | head -n 5 | xargs -n1 dirname 2>/dev/null); do
+    # ---- UniFi OS: consoles (/data/unifi-core/config) and UniFi OS Server, which runs UniFi OS in a
+    # podman container (rootless, as user uosserver) with the same files in its data volume and
+    # serves the UI on 11443. ${CK_ROOT} is an alternate filesystem root, used by the tests.
+    for d in "${CK_ROOT:-}"/data/unifi-core/config "${CK_ROOT:-}"/mnt/data/unifi-core/config \
+               "${CK_ROOT:-}"/home/*/.local/share/containers/storage/volumes/*/_data/unifi-core/config \
+               "${CK_ROOT:-}"/var/lib/containers/storage/volumes/*/_data/unifi-core/config \
+               $(find "${CK_ROOT:-}"/data "${CK_ROOT:-}"/mnt "${CK_ROOT:-}"/var/lib "${CK_ROOT:-}"/opt "${CK_ROOT:-}"/srv \
+                   -maxdepth 6 -type f -name unifi-core.crt 2>/dev/null | head -n 5 | xargs -n1 dirname 2>/dev/null); do
       [ -f "$d/unifi-core.crt" ] && echo "$d"
     done | sort -u | while read -r d; do
-      emit unifiOS "unifi-core ($d)" "$d/unifi-core.crt" "$d/unifi-core.key" ""
+      case "$d" in
+        */containers/storage/volumes/*) emit unifiOS "UniFi OS Server (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d;verify_port=11443" ;;
+        *) emit unifiOS "UniFi OS console (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d" ;;
+      esac
     done
 
     # ---- OPNsense ----

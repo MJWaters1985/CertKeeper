@@ -237,6 +237,8 @@ public enum DeploymentOption: String, Sendable {
     case nginxConf = "nginx_conf"
     /// nginx: prefix (-p) of that instance.
     case nginxPrefix = "nginx_prefix"
+    /// UniFi OS: folder holding unifi-core.crt/.key (a podman volume on UniFi OS Server).
+    case unifiDir = "unifi_dir"
 
     public var defaultValue: String {
         switch self {
