@@ -49,7 +49,9 @@ struct OverviewView: View {
                         TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1) }
                         TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
                             .width(110)
-                        TableColumn("Status") { c in StatusBadge(status: model.status(of: c), monitored: c.isMonitored) }.width(170)
+                        TableColumn("Valid For") { c in ValidForCell(status: model.status(of: c), days: c.current?.daysRemaining) }
+                            .width(90)
+                        TableColumn("Status") { c in ManagementBadge(monitored: c.isMonitored) }.width(110)
                         TableColumn("Deployed") { c in
                             let ds = model.deployments(for: c.id)
                             let current = ds.filter { !model.needsDeployment($0) && $0.enabled }.count
@@ -145,5 +147,45 @@ struct ActivityView: View {
         case .warning: Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
         case .error: Image(systemName: "xmark.octagon.fill").foregroundStyle(.red)
         }
+    }
+}
+
+/// Days of validity left, coloured by the certificate's renewal status.
+struct ValidForCell: View {
+    let status: AppModel.CertStatus
+    let days: Int?
+
+    var body: some View {
+        let color: Color = switch status {
+        case .valid: .green
+        case .renewDue, .domainsChanged: .orange
+        case .expired: .red
+        case .notIssued: .secondary
+        }
+        Group {
+            if case .expired = status {
+                Text("Expired")
+            } else if let days, status != .notIssued {
+                Text("\(days) \(days == 1 ? "day" : "days")").monospacedDigit()
+            } else {
+                Text("—")
+            }
+        }
+        .foregroundStyle(color)
+    }
+}
+
+/// Whether CertKeeper manages a certificate or only monitors one another system renews.
+struct ManagementBadge: View {
+    let monitored: Bool
+
+    var body: some View {
+        Label(monitored ? "Monitored" : "Managed", systemImage: monitored ? "eye" : "arrow.triangle.2.circlepath")
+            .font(.caption.weight(.medium))
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background((monitored ? Color.purple : Color.blue).opacity(0.15), in: Capsule())
+            .foregroundStyle(monitored ? Color.purple : Color.blue)
+            .help(monitored ? "Renewed by another system; CertKeeper watches it and warns before it expires."
+                            : "CertKeeper issues, renews and deploys it.")
     }
 }
