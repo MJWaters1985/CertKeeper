@@ -307,6 +307,16 @@ public struct AppSettings: Codable, Hashable, Sendable {
     /// Seconds to wait for the TXT record to appear on public resolvers before giving up.
     public var dnsPropagationTimeout: Int = 300
     public var acceptedTermsOfService: Bool = false
+    /// Days to keep activity log entries (nil = the default). Optional so settings saved by earlier
+    /// versions, which lack it, still decode.
+    public var logRetentionDays: Int?
+
+    public static let defaultLogRetentionDays = 90
+    public static let logRetentionRange = 1...365
+
+    public var effectiveLogRetentionDays: Int {
+        min(max(logRetentionDays ?? Self.defaultLogRetentionDays, Self.logRetentionRange.lowerBound), Self.logRetentionRange.upperBound)
+    }
 
     public init() {}
 

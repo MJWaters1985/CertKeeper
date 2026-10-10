@@ -9,7 +9,7 @@ struct SettingsView: View {
             CloudflareSettings().tabItem { Label("Cloudflare", systemImage: "cloud") }
             ScheduleSettings().tabItem { Label("Schedule", systemImage: "clock") }
         }
-        .frame(width: 540, height: 360)
+        .frame(width: 540, height: 400)
     }
 }
 
@@ -115,6 +115,24 @@ struct ScheduleSettings: View {
             Toggle("Deploy automatically after renewal or drift", isOn: $model.inventory.settings.autoDeploy)
             Stepper("Wait up to \(model.inventory.settings.dnsPropagationTimeout)s for DNS propagation",
                     value: $model.inventory.settings.dnsPropagationTimeout, in: 60...1800, step: 60)
+            LabeledContent("Keep activity for") {
+                HStack(spacing: 6) {
+                    TextField("", value: Binding(
+                        get: { model.inventory.settings.effectiveLogRetentionDays },
+                        set: { model.inventory.settings.logRetentionDays = min(max($0, AppSettings.logRetentionRange.lowerBound),
+                                                                                AppSettings.logRetentionRange.upperBound) }
+                    ), format: .number)
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 56)
+                    Stepper("", value: Binding(
+                        get: { model.inventory.settings.effectiveLogRetentionDays },
+                        set: { model.inventory.settings.logRetentionDays = $0 }
+                    ), in: AppSettings.logRetentionRange)
+                    .labelsHidden()
+                    Text(model.inventory.settings.effectiveLogRetentionDays == 1 ? "day" : "days")
+                }
+            }
+            .onChange(of: model.inventory.settings.logRetentionDays) { _, _ in model.pruneLog() }
             Toggle("Open at login", isOn: $launchAtLogin)
                 .onChange(of: launchAtLogin) { _, on in
                     do {

@@ -28,6 +28,7 @@ public final class AppModel {
             inventory = try InventoryFile.load(from: fileURL)
             repairChains()
             moveSecretsOutOfInventory()
+            pruneLog()
         } catch {
             // Never let a file we can't read be overwritten by an empty inventory: move it aside first.
             let backup = fileURL.deletingPathExtension()
@@ -167,9 +168,20 @@ public final class AppModel {
         body(&inventory.hosts[i])
     }
 
+    /// Hard cap on log entries, a backstop behind the age limit in Settings.
+    static let maxLogEntries = 1000
+
     public func log(_ level: LogEntry.Level, _ message: String, detail: String? = nil) {
         inventory.log.insert(LogEntry(level, message, detail: detail), at: 0)
-        if inventory.log.count > 1000 { inventory.log.removeLast(inventory.log.count - 1000) }
+        pruneLog()
+    }
+
+    /// Drops entries older than the configured retention, and any beyond the hard cap.
+    public func pruneLog(now: Date = Date()) {
+        let cutoff = now.addingTimeInterval(-Double(inventory.settings.effectiveLogRetentionDays) * 86_400)
+        var kept = inventory.log.filter { $0.date >= cutoff }
+        if kept.count > Self.maxLogEntries { kept.removeLast(kept.count - Self.maxLogEntries) }
+        if kept.count != inventory.log.count { inventory.log = kept }
     }
 
     /// Marks `id` as in progress for the duration of `body`. Operations on the same certificate or
