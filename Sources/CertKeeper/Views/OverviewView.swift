@@ -49,9 +49,9 @@ struct OverviewView: View {
                     TableColumn("Certificate") { c in
                         Button(c.name) { selection = .certificate(c.id) }.buttonStyle(.link)
                     }
-                    .width(min: 110, ideal: 200)
+                    .width(min: 100, ideal: 200)
                     TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1).truncationMode(.middle) }
-                        .width(min: 120, ideal: 280)
+                        .width(min: 115, ideal: 280)
                     TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
                         .width(min: 85, ideal: 110, max: 150)
                     TableColumn("Valid For") { c in ValidForCell(status: model.status(of: c), days: c.current?.daysRemaining) }
@@ -257,10 +257,14 @@ struct FitTableColumnsOnAppear: NSViewRepresentable {
     }
 
     /// Spreads the gap (or overflow) across columns with room left, proportionally to their widths.
-    static func fit(_ table: NSTableView, to available: CGFloat) {
+    static func fit(_ table: NSTableView, to visible: CGFloat) {
         let columns = table.tableColumns
         let spacing = table.intercellSpacing.width * CGFloat(columns.count)
         var widths = columns.map(\.width)
+        // SwiftUI makes the table's frame ~15pt wider than its columns. Leave room for that margin, or
+        // the frame ends up wider than the view and a horizontal scrollbar appears.
+        let overhead = min(max(table.frame.width - spacing - widths.reduce(0, +), 0), 40)
+        let available = visible - overhead
         var delta = available - spacing - widths.reduce(0, +)
         for _ in 0..<4 where abs(delta) > 0.5 {
             let flexible = columns.indices.filter {
