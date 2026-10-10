@@ -47,11 +47,15 @@ struct OverviewView: View {
             } else {
                 Table(certs.sorted { ($0.current?.notAfter ?? .distantPast) < ($1.current?.notAfter ?? .distantPast) }) {
                     TableColumn("Certificate") { c in
-                        Button(c.name) { selection = .certificate(c.id) }.buttonStyle(.link)
+                        Button { selection = .certificate(c.id) } label: {
+                            Text(c.name).lineLimit(1).truncationMode(.middle)
+                        }
+                        .buttonStyle(.link)
+                        .help(c.name)
                     }
-                    .width(min: 100, ideal: 200)
+                    .width(min: 100, ideal: 240)
                     TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1).truncationMode(.middle) }
-                        .width(min: 115, ideal: 280)
+                        .width(min: 115, ideal: 240)
                     TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
                         .width(min: 85, ideal: 110, max: 150)
                     TableColumn("Valid For") { c in ValidForCell(status: model.status(of: c), days: c.current?.daysRemaining) }
