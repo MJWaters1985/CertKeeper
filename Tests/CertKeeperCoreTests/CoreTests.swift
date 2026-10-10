@@ -190,7 +190,7 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
         p.standardInput = pipe
         p.standardError = Pipe()
         try p.run()
-        SSHRunner.ignoreSIGPIPE(); try? pipe.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+        SSHRunner.ignoreSIGPIPE(); try? pipe.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
         try pipe.fileHandleForWriting.close()
         p.waitUntilExit()
         #expect(p.terminationStatus == 0, "sh -n failed for \(kind)")
@@ -331,7 +331,7 @@ func runShell(_ script: String, path: String, env: [String: String] = [:]) throw
     p.standardOutput = output
     p.standardError = err
     try p.run()
-    SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+    SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
     try input.fileHandleForWriting.close()
     let out = output.fileHandleForReading.readDataToEndOfFile()
     let errOut = err.fileHandleForReading.readDataToEndOfFile()

@@ -414,12 +414,17 @@ public enum Discovery {
                $(find "${CK_ROOT:-}"/data "${CK_ROOT:-}"/mnt "${CK_ROOT:-}"/var/lib "${CK_ROOT:-}"/opt "${CK_ROOT:-}"/srv \
                    -maxdepth 6 -type f -name unifi-core.crt 2>/dev/null | head -n 5 | xargs -n1 dirname 2>/dev/null); do
       [ -f "$d/unifi-core.crt" ] && echo "$d"
-    done | sort -u | while read -r d; do
+    done | sort -u > "${TMPDIR:-/tmp}/ck-unifi.$$"
+    if [ ! -s "${TMPDIR:-/tmp}/ck-unifi.$$" ] && { command -v uosserver >/dev/null 2>&1 || [ -x /usr/local/bin/uosserver ] || systemctl cat uosserver.service >/dev/null 2>&1; }; then
+      echo "@@WARN UniFi OS Server is installed but no unifi-core.crt was found (running as uid $(id -u); checked /data, /mnt/data, /home/*/.local/share/containers and /var/lib/containers volumes; /home entries: $(ls -d /home/*/.local/share/containers/storage/volumes/*/_data 2>&1 | tr '\n' ' '))"
+    fi
+    while read -r d; do
       case "$d" in
         */containers/storage/volumes/*) emit unifiOS "UniFi OS Server (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d;verify_port=11443" ;;
         *) emit unifiOS "UniFi OS console (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d" ;;
       esac
-    done
+    done < "${TMPDIR:-/tmp}/ck-unifi.$$"
+    rm -f "${TMPDIR:-/tmp}/ck-unifi.$$"
 
     # ---- OPNsense ----
     if [ -x /usr/local/bin/php ] && [ -f /usr/local/etc/inc/config.inc ] && command -v configctl >/dev/null 2>&1; then
@@ -507,8 +512,15 @@ public enum Discovery {
             throw SSHRunner.SSHError(message: "SSH to \(host.name) failed: \(result.stderr)", result: result)
         }
         var report = parse(result.stdout)
-        if report.os.isEmpty, !result.stderr.isEmpty {
-            report.warnings.append(result.stderr.trimmingCharacters(in: .whitespacesAndNewlines))
+        // Never drop evidence: a script that died part-way (timeout, error) can still print the OS line.
+        if result.status != 0 {
+            report.warnings.append(result.status == 15
+                ? "Discovery was stopped after 120 s; sections after the slow one didn't run"
+                : "Discovery script exited with status \(result.status)")
+        }
+        let stderr = result.stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        if !stderr.isEmpty {
+            report.warnings.append("stderr: " + stderr.suffix(15).joined(separator: " | "))
         }
         return report
     }

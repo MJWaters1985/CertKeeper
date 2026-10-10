@@ -27,6 +27,14 @@ public struct SSHRunner: Sendable {
     /// Looks up a host's stored password. Injectable for tests.
     public var passwordLookup: @Sendable (UUID) -> String? = { Keychain.get(.hostPassword($0)) }
 
+    /// `sh -s` reads its script from stdin, and dash (Ubuntu/Debian's /bin/sh) reads a pipe ahead in
+    /// blocks, so any command in the script that also reads stdin swallows the rest of the script,
+    /// which then silently never runs (that hid UniFi OS Server from discovery). A brace group must be
+    /// read completely before it runs, and `</dev/null` gives every command inside an empty stdin.
+    public static func shielded(_ script: String) -> String {
+        "{\n\(script)\n} </dev/null\n"
+    }
+
     /// Writing to a pipe whose reader has exited raises SIGPIPE, which kills the process by default.
     /// A remote script that exits early (e.g. a failed precondition) closes ssh's stdin while a large
     /// script is still being written, so processes driving SSHRunner must ignore it. Idempotent.
@@ -87,13 +95,13 @@ public struct SSHRunner: Sendable {
     public func run(_ script: String, on host: ManagedHost, privileged: Bool = true, timeout: TimeInterval = 300) async throws -> Result {
         try? FileManager.default.createDirectory(at: Self.controlDirectory, withIntermediateDirectories: true)
         var remote = "sh -s"
-        var input = script
+        var input = Self.shielded(script)
         if privileged && host.useSudo {
             if let password = passwordLookup(host.id), try await !passwordlessSudo(host) {
                 // -k forces a prompt even with cached credentials, so the first stdin line is always
                 // consumed as the password and never reaches sh. NOPASSWD was ruled out above.
                 remote = "sudo -k -S -p '' sh -s"
-                input = password + "\n" + script
+                input = password + "\n" + Self.shielded(script)
             } else {
                 remote = "sudo -n sh -s"
             }

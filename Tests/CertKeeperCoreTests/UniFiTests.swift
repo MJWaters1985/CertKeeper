@@ -118,3 +118,41 @@ struct FakeUOS {
         #expect(r.status == 3)
     }
 }
+
+@Suite struct StdinShieldTests {
+    /// What hid UniFi OS Server: a command that reads stdin swallows the rest of a script piped to `sh -s`.
+    let script = """
+    echo before
+    cat > /dev/null
+    echo after
+    """
+
+    @Test func unshieldedScriptLosesEverythingAfterAStdinReader() async throws {
+        SSHRunner.ignoreSIGPIPE()
+        let r = try await SSHRunner.execute("/bin/sh", ["-s"], stdin: script, timeout: 30)
+        #expect(r.stdout.contains("before"))
+        #expect(!r.stdout.contains("after"), "reproduces the bug: the rest of the script was eaten")
+    }
+
+    @Test func shieldedScriptRunsCompletely() async throws {
+        SSHRunner.ignoreSIGPIPE()
+        let r = try await SSHRunner.execute("/bin/sh", ["-s"], stdin: SSHRunner.shielded(script), timeout: 30)
+        #expect(r.stdout == "before\nafter\n")
+        #expect(r.status == 0)
+    }
+
+    @Test func shieldedKeepsHeredocsTrapsAndExitCodes() async throws {
+        SSHRunner.ignoreSIGPIPE()
+        let s = """
+        set -eu
+        trap 'echo cleaned' EXIT
+        cat <<'X'
+        heredoc text
+        X
+        exit 7
+        """
+        let r = try await SSHRunner.execute("/bin/sh", ["-s"], stdin: SSHRunner.shielded(s), timeout: 30)
+        #expect(r.stdout == "heredoc text\ncleaned\n")
+        #expect(r.status == 7)
+    }
+}

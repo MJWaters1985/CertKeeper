@@ -105,7 +105,7 @@ struct FakeTrueNAS {
         let input = Pipe(), output = Pipe(), err = Pipe()
         p.standardInput = input; p.standardOutput = output; p.standardError = err
         try p.run()
-        SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(script.utf8))
+        SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
         try input.fileHandleForWriting.close()
         let out = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
         let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
@@ -348,7 +348,7 @@ struct FakeTrueNAS {
         #expect(capture.contains("BatchMode=no"))
         #expect(capture.contains("ASKPASS /Applications/CertKeeper.app/Contents/MacOS/CertKeeper force \(host.id.uuidString)"))
         #expect(capture.contains("REMOTE sudo -k -S -p '' sh -s"))
-        #expect(capture.contains("REMOTE sudo -k -S -p '' sh -s\ns3cret\necho hi"))
+        #expect(capture.contains("REMOTE sudo -k -S -p '' sh -s\ns3cret\n{\necho hi\n} </dev/null"))
         #expect(!capture.contains("ARGS") || !capture.components(separatedBy: "\n")[0].contains("s3cret"), "password never in argv")
     }
 
@@ -359,7 +359,7 @@ struct FakeTrueNAS {
         host.useSudo = true
         _ = try await runner.run("echo hi", on: host)
         let capture = try String(contentsOf: dir.appendingPathComponent("capture"), encoding: .utf8)
-        #expect(capture.contains("REMOTE sudo -n sh -s\necho hi"))
+        #expect(capture.contains("REMOTE sudo -n sh -s\n{\necho hi\n} </dev/null"))
         #expect(!capture.contains("s3cret"))
         #expect(capture.contains("BatchMode=yes"), "password login is off for this host")
         #expect(capture.contains("ASKPASS none none none"))
