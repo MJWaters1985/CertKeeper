@@ -29,33 +29,23 @@ enum ConfigTransferUI {
 
     /// Returns "" for no secrets, the password to encrypt them with, or nil if cancelled.
     private static func askExportSecrets() -> String? {
-        let include = NSButton(checkboxWithTitle: "Include secrets (Cloudflare token, ACME key, private keys, host passwords)", target: nil, action: nil)
-        let password = NSSecureTextField(), confirm = NSSecureTextField()
-        password.placeholderString = "Password (at least 8 characters)"
-        confirm.placeholderString = "Confirm password"
-        let stack = NSStackView(views: [include, password, confirm])
-        stack.orientation = .vertical
-        stack.alignment = .leading
-        stack.spacing = 8
-        stack.frame = NSRect(x: 0, y: 0, width: 360, height: 84)
-        for field in [password, confirm] { field.widthAnchor.constraint(equalToConstant: 360).isActive = true }
-
+        let options = ExportSecretsAccessory()
         while true {
             let alert = NSAlert()
             alert.messageText = "Export Configuration"
-            alert.informativeText = "Exports hosts, certificates, deployments and settings. Secrets are only included if you choose to, encrypted with a password you'll need to import them."
-            alert.accessoryView = stack
+            alert.informativeText = "Exports hosts, certificates, deployments and settings. Secrets are only included if you choose."
+            alert.accessoryView = options.view
             alert.addButton(withTitle: "Continue…")
             alert.addButton(withTitle: "Cancel")
-            alert.window.initialFirstResponder = include
+            alert.window.initialFirstResponder = options.include
             guard alert.runModal() == .alertFirstButtonReturn else { return nil }
-            guard include.state == .on else { return "" }
-            if password.stringValue.count < 8 {
+            guard options.includeSecrets else { return "" }
+            if options.password.stringValue.count < 8 {
                 show("Password too short", "Use at least 8 characters.", style: .warning)
-            } else if password.stringValue != confirm.stringValue {
+            } else if options.password.stringValue != options.confirm.stringValue {
                 show("Passwords don't match", "Type the same password in both fields.", style: .warning)
             } else {
-                return password.stringValue
+                return options.password.stringValue
             }
         }
     }
