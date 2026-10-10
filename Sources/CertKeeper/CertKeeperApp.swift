@@ -37,6 +37,12 @@ struct CertKeeperApp: App {
             CommandGroup(replacing: .appInfo) {
                 Button("About CertKeeper") { AboutPanel.show() }
             }
+            CommandGroup(replacing: .importExport) {
+                Button("Export Configuration…") { ConfigTransferUI.export(model) }
+                    .keyboardShortcut("e", modifiers: [.command, .shift])
+                Button("Import Configuration…") { ConfigTransferUI.import(model) }
+                    .keyboardShortcut("i", modifiers: [.command, .shift])
+            }
             CommandMenu("Certificates") {
                 Button("Run Rotation Pass Now") { Task { await model.runMaintenance() } }
                     .keyboardShortcut("r", modifiers: [.command, .shift])

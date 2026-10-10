@@ -95,6 +95,18 @@ The first launch after switching asks once per item — choose **Always Allow** 
 3. Add hosts. Use key-based SSH or a stored password, as root or as a user with sudo (enable *Use sudo*).
 4. Run **Discover** on each host and adopt what it finds, or create certificates and add deployments manually.
 
+## Exporting and importing the configuration
+
+**File › Export Configuration…** (⇧⌘E) saves hosts, certificates, deployments, settings and ACME account links to
+a JSON file; the activity log isn't included. Secrets (Cloudflare token, ACME account key, certificate private keys,
+host passwords, .pfx passwords) are only included if you tick the box. They're then encrypted with a password you
+choose: PBKDF2-SHA256 with 600,000 iterations, then AES-256-GCM. Without them the file contains no passwords or keys.
+
+**File › Import Configuration…** (⇧⌘I) shows what the file contains and asks before replacing the current
+configuration. The current inventory is first saved to `inventory.before-import-<time>.json` next to it, and the
+activity log is kept. Secrets in the file go to the Keychain. After import, the log lists certificates without a
+private key (reissue them before deploying) and hosts without a password.
+
 ## App icon
 
 `Support/Icons/CertKeeper.icon` is a layered Icon Composer icon: a certificate behind a gold seal and ribbons, on a

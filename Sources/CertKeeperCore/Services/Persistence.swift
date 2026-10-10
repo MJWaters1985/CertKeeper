@@ -49,7 +49,7 @@ public enum Keychain {
         /// A secret deployment option (e.g. a .pfx password), keyed by deployment and option name.
         case deploymentSecret(UUID, String)
 
-        var account: String {
+        public var account: String {
             switch self {
             case .deploymentSecret(let id, let name): "deployment-\(id.uuidString)-\(name)"
             case .hostPassword(let id): "host-password-\(id.uuidString)"

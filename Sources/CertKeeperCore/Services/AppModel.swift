@@ -180,6 +180,38 @@ public final class AppModel {
         return try await body()
     }
 
+    // MARK: - Configuration export / import
+
+    public func exportConfiguration(password: String?) throws -> Data {
+        try ConfigTransfer.export(inventory, secrets: secrets, password: password)
+    }
+
+    /// Replaces the configuration with `file`'s. The current inventory is saved next to the live one
+    /// first (no secrets in it). Secrets from the file go to the Keychain; existing Keychain entries
+    /// for items the file doesn't cover are left alone. The activity log is kept. Returns the backup.
+    @discardableResult
+    public func importConfiguration(_ file: ConfigTransfer.File, secrets imported: [(Keychain.Item, String)]) throws -> URL {
+        let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
+        let backup = fileURL.deletingLastPathComponent().appendingPathComponent("inventory.before-import-\(stamp).json")
+        try InventoryFile.save(inventory, to: backup)
+        for (item, value) in imported { try secrets.set(value, for: item) }
+
+        var next = file.inventory
+        next.log = inventory.log
+        discoveredSecrets = [:]
+        SudoCache.shared.reset()
+        inventory = next
+
+        let missingKeys = inventory.certificates.filter { !$0.isMonitored && $0.leafPEM != nil && secrets.get(.certificateKey($0.id)) == nil }
+        let missingPasswords = inventory.hosts.filter { ($0.passwordLogin || $0.useSudo) && secrets.get(.hostPassword($0.id)) == nil }
+        var detail = "\(inventory.hosts.count) hosts, \(inventory.certificates.count) certificates, \(inventory.deployments.count) deployments; "
+            + "\(imported.count) secret(s) restored. Previous configuration saved to \(backup.lastPathComponent)."
+        if !missingKeys.isEmpty { detail += "\nNo private key for: \(missingKeys.map(\.name).joined(separator: ", ")) — reissue before deploying." }
+        if !missingPasswords.isEmpty { detail += "\nNo password for: \(missingPasswords.map(\.name).joined(separator: ", ")) — re-enter it if the host needs one." }
+        log(missingKeys.isEmpty && missingPasswords.isEmpty ? .success : .warning, "Imported configuration", detail: detail)
+        return backup
+    }
+
     // MARK: - Mutations used by the UI
 
     public func addHost(_ host: ManagedHost) { inventory.hosts.append(host) }
