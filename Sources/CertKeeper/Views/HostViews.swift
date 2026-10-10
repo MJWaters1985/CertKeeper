@@ -116,7 +116,11 @@ struct DiscoveredRow: View {
             }
             Spacer()
             if adopted {
-                Label("Managed", systemImage: "checkmark").font(.caption).foregroundStyle(.green)
+                let monitored = model.deployments(onHost: hostID).contains { d in
+                    d.kind == endpoint.kind && model.certificate(d.certificateID)?.isMonitored == true
+                }
+                Label(monitored ? "Monitored" : "Managed", systemImage: monitored ? "eye" : "checkmark")
+                    .font(.caption).foregroundStyle(monitored ? Color.purple : Color.green)
             } else {
                 AdoptControl(endpoint: endpoint, hostID: hostID)
             }

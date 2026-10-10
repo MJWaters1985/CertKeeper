@@ -242,6 +242,6 @@ struct FakeUOS {
         let d = m.adopt(try #require(report.endpoints.first), hostID: host.id, target: .monitor)
         #expect(d.options["monitor_suggested"] == nil)
         #expect(m.certificate(d.certificateID)?.isMonitored == true)
-        #expect(d.verifyEndpoint == "unifi.example.com:11443")
+        #expect(d.verifyEndpoint == "", "device-renewed certificates are read on the host, not over TLS")
     }
 }

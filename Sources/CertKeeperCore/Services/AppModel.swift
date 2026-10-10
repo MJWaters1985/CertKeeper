@@ -843,7 +843,12 @@ public final class AppModel {
         for (key, value) in discoveredSecrets[endpoint.id] ?? [:] {
             try? secrets.set(value, for: .deploymentSecret(d.id, key))
         }
-        if let h = host(hostID) {
+        if target == .monitor && endpoint.options?["monitor_suggested"] == "true" {
+            // The device renews this certificate itself, and discovery found the file it serves: read
+            // that over SSH. Its TLS port may not be reachable from this Mac (UniFi OS Server's 11443
+            // resets direct connections), and an endpoint can still be added in the editor.
+            d.verifyEndpoint = ""
+        } else if let h = host(hostID) {
             if let port = endpoint.options?[DeploymentOption.verifyPort.rawValue], !port.isEmpty {
                 d.verifyEndpoint = "\(h.address):\(port)"
             } else {
