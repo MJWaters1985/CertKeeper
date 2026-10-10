@@ -35,16 +35,19 @@ struct CertKeeperApp: App {
         }
         .commands {
             CommandGroup(replacing: .appInfo) {
-                Button("About CertKeeper") { AboutPanel.show() }
+                Button("About CertKeeper") { AboutPanel.show() }.help("Version, copyright and what CertKeeper does")
             }
             CommandGroup(replacing: .importExport) {
                 Button("Export Configuration…") { ConfigTransferUI.export(model) }
+                    .help("Save hosts, certificates, deployments and settings to a file")
                     .keyboardShortcut("e", modifiers: [.command, .shift])
                 Button("Import Configuration…") { ConfigTransferUI.import(model) }
+                    .help("Replace the configuration with one from an exported file")
                     .keyboardShortcut("i", modifiers: [.command, .shift])
             }
             CommandMenu("Certificates") {
                 Button("Run Rotation Pass Now") { Task { await model.runMaintenance() } }
+                    .help("Renew what's due, check every deployment, and redeploy any that are out of date")
                     .keyboardShortcut("r", modifiers: [.command, .shift])
                     .disabled(model.maintenanceRunning)
             }
@@ -61,6 +64,7 @@ struct CertKeeperApp: App {
         } label: {
             Image(systemName: model.inventory.certificates.contains { model.needsIssuance($0) } || model.inventory.deployments.contains(where: model.needsDeployment)
                   ? "lock.trianglebadge.exclamationmark" : "lock.shield")
+                .help("CertKeeper: certificate expiry and rotation")
         }
     }
 }
@@ -81,12 +85,15 @@ struct MenuBarContent: View {
             Task { await model.runMaintenance() }
         }
         .disabled(model.maintenanceRunning)
+        .help("Renew what's due, check every deployment, and redeploy any that are out of date")
         Button("Open CertKeeper") {
             openWindow(id: "main")
             NSApp.activate()
         }
+        .help("Show the main window")
         Divider()
         Button("Quit") { NSApp.terminate(nil) }
+            .help("Quit CertKeeper; automatic rotation stops until it's opened again")
     }
 }
 

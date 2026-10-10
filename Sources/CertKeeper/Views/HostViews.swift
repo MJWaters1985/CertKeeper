@@ -38,6 +38,7 @@ struct HostDetailView: View {
                         if model.busy.contains(hostID) { ProgressView().controlSize(.small) }
                         Button("Discover", systemImage: "magnifyingglass") { Task { await model.discover(hostID) } }
                             .disabled(model.busy.contains(hostID))
+                            .help("Scan this host over SSH for certificates in use by its services")
                     }
                 }
 
@@ -55,6 +56,7 @@ struct HostDetailView: View {
                             }
                         }
                         .disabled(model.inventory.certificates.isEmpty)
+                        .help("Install one of your certificates on this host")
                     }
                 }
             }
@@ -70,7 +72,9 @@ struct HostDetailView: View {
                         }
                     }
                     .disabled(testing)
+                    .help("Connect over SSH and report the user and system")
                     Button("Edit", systemImage: "pencil") { editing = true }
+                        .help("Change this host's address, login and sudo settings")
                 }
             }
             .sheet(isPresented: $editing) {
@@ -148,6 +152,7 @@ struct AdoptControl: View {
                             Button("\(c.name) — \(describe(model.coverage(of: c, for: names)))") {
                                 model.adopt(endpoint, hostID: hostID, target: .existing(c.id))
                             }
+                            .help("Deploy \(c.name) here")
                         }
                     }
                 }
@@ -157,6 +162,7 @@ struct AdoptControl: View {
                             Button("\(c.name) — \(describe(model.coverage(of: c, for: names)))") {
                                 model.adopt(endpoint, hostID: hostID, target: .existing(c.id))
                             }
+                            .help("Deploy \(c.name) here, although it doesn't cover every name this service uses")
                         }
                     }
                 }
@@ -164,9 +170,11 @@ struct AdoptControl: View {
                 Button("New certificate for \(names.joined(separator: ", "))") {
                     model.adopt(endpoint, hostID: hostID, target: .new)
                 }
+                .help("Create a managed certificate with these names and deploy it here")
                 Button("Monitor only (renewed by something else)") {
                     model.adopt(endpoint, hostID: hostID, target: .monitor)
                 }
+                .help("Watch this certificate's expiry without CertKeeper renewing or deploying it")
             } label: {
                 Text(monitorSuggested ? "Monitor" : "Adopt")
             } primaryAction: {
@@ -179,8 +187,10 @@ struct AdoptControl: View {
             Text(monitorSuggested ? "renewed by the device itself" : (automatic.map { "uses \($0.name)" } ?? "creates a new certificate"))
                 .font(.caption2).foregroundStyle(.secondary)
         }
-        .help(automatic.map { "Click to deploy the managed certificate “\($0.name)” here. Use the menu to choose another." }
-              ?? "No managed certificate covers these names — clicking creates one. Use the menu to attach an existing one instead.")
+        .help(monitorSuggested
+              ? "Click to monitor this certificate, which the device renews itself. Use the menu for other options."
+              : automatic.map { "Click to deploy the managed certificate “\($0.name)” here. Use the menu to choose another." }
+                ?? "No managed certificate covers these names — clicking creates one. Use the menu to attach an existing one instead.")
     }
 
     /// The device renews this certificate itself (e.g. UniFi OS's own ACME client), so watch it rather
@@ -221,6 +231,7 @@ struct HostEditor: View {
                         panel.showsHiddenFiles = true
                         if panel.runModal() == .OK, let url = panel.url { host.identityFile = url.path }
                     }
+                    .help("Pick an SSH private key file")
                 }
                 Section("Password") {
                     HStack {
@@ -228,11 +239,14 @@ struct HostEditor: View {
                                     prompt: Text(hasStoredPassword && !removePassword ? "•••••••• (saved in Keychain)" : "Optional"))
                         if hasStoredPassword && !removePassword {
                             Button("Remove") { removePassword = true; password = "" }
+                                .help("Delete this host's saved password from the Keychain when you save")
                         }
                     }
                     Toggle("Allow password login", isOn: $host.passwordLogin)
                         .disabled(password.isEmpty && (!hasStoredPassword || removePassword))
+                        .help("Log in with the saved password if key authentication fails")
                     Toggle("Use sudo for install commands", isOn: $host.useSudo)
+                        .help("Run discovery and installs as root through sudo, using the saved password if needed")
                     Text("Keys are always tried first. The password is used for SSH login when allowed, and for sudo when the account doesn't have passwordless sudo. It's kept in your login Keychain. New host keys are trusted on first use and pinned in ~/.ssh/known_hosts.")
                         .font(.caption).foregroundStyle(.secondary)
                     if let error { Text(error).font(.caption).foregroundStyle(.red) }
@@ -242,6 +256,7 @@ struct HostEditor: View {
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    .help("Close without saving changes")
                 Button("Save") {
                     if host.name.isEmpty { host.name = host.address }
                     do {
@@ -257,6 +272,7 @@ struct HostEditor: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(host.address.isEmpty)
+                .help("Save this host; a password you typed goes to the Keychain")
             }
             .padding()
         }

@@ -28,6 +28,10 @@ final class CertExportAccessory: NSObject {
         password.placeholderString = "Password for the .p12 file"
         confirm.placeholderString = "Confirm password"
         legacy.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        formatMenu.toolTip = "The file format to export: each one's typical use is shown below"
+        password.toolTip = "Protects the .p12 file; you'll need it when importing"
+        confirm.toolTip = "Type the password again"
+        legacy.toolTip = "Use 3DES/SHA-1 instead of AES-256, for Windows Server 2016 and earlier, older Java and some appliances"
 
         let stack = NSStackView(views: [formatMenu, summary, password, confirm, legacy])
         stack.orientation = .vertical

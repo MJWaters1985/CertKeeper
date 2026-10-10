@@ -42,6 +42,7 @@ struct CertificateDetailView: View {
                                 .font(.caption).foregroundStyle(.secondary)
                             Spacer()
                             Button("Apply", action: applyDomains).disabled(parse(domainsText) == cert.domains)
+                                .help("Save the domain list; a managed certificate is reissued on the next pass")
                         }
                     }
                     VStack(alignment: .leading) {
@@ -50,6 +51,7 @@ struct CertificateDetailView: View {
                             set: { on in
                                 if on && cert.leafPEM != nil { confirmMonitor = true } else { model.setMonitorOnly(certID, on) }
                             }))
+                            .help("Only watch this certificate's expiry; another system renews it and CertKeeper never deploys it")
                         Text(cert.isMonitored
                              ? "Renewed by another system (e.g. the device's own ACME client). CertKeeper never issues or deploys it; it watches what each endpoint serves and warns before it expires."
                              : "CertKeeper issues, renews and deploys this certificate.")
@@ -59,7 +61,9 @@ struct CertificateDetailView: View {
                         Picker("Key type", selection: $model.inventory.certificates[i].keyAlgorithm) {
                             ForEach(KeyAlgorithm.allCases) { Text($0.rawValue).tag($0) }
                         }
+                        .help("Key algorithm for the next issuance; ECDSA P-256 suits almost everything")
                         Toggle("Renew automatically", isOn: $model.inventory.certificates[i].autoRenew)
+                            .help("Renew and redeploy during rotation passes when the certificate is due")
                     }
                     Stepper(value: Binding(
                         get: { model.renewalWindow(for: cert) },
@@ -68,6 +72,8 @@ struct CertificateDetailView: View {
                         LabeledContent(cert.isMonitored ? "Warn when fewer than" : "Renew when fewer than",
                                        value: "\(model.renewalWindow(for: cert)) days remain\(cert.renewDaysBeforeExpiry == nil ? " (default)" : "")")
                     }
+                    .help(cert.isMonitored ? "Warn when the served certificate has fewer days left than this"
+                                           : "Renew when the certificate has fewer days left than this")
                 }
 
                 Section {
@@ -87,6 +93,7 @@ struct CertificateDetailView: View {
                             editingDeployment = Deployment(certificateID: certID, hostID: model.inventory.hosts.first?.id ?? UUID(), kind: .nginx)
                         }
                         .disabled(model.inventory.hosts.isEmpty)
+                        .help("Install this certificate on another host or service")
                     }
                 }
             }
@@ -100,17 +107,22 @@ struct CertificateDetailView: View {
                         Button("Check Now", systemImage: "eye") {
                             Task { for d in model.deployments(for: certID) where d.enabled { await model.check(d.id, logResult: true) } }
                         }
+                        .help("Check the certificate each deployment is serving now")
                     } else {
                     Button(cert.current == nil ? "Issue" : "Renew Now", systemImage: "arrow.triangle.2.circlepath") {
                         if model.needsIssuance(cert) { Task { await model.issue(certID) } } else { confirmIssue = true }
                     }
                     .disabled(model.busy.contains(certID) || cert.domains.isEmpty)
+                    .help(cert.current == nil ? "Request this certificate from Let's Encrypt"
+                                              : "Request a new copy from Let's Encrypt now, even if it isn't due")
                     Button("Deploy All", systemImage: "square.and.arrow.up.on.square") {
                         Task { for d in model.deployments(for: certID) where d.enabled { await model.deploy(d.id) } }
                     }
                     .disabled(cert.current == nil)
+                    .help("Install the current certificate on every enabled deployment")
                     Button("Export…", systemImage: "square.and.arrow.down") { export(cert) }
                         .disabled(cert.current == nil)
+                        .help("Save the certificate, full chain and private key as PEM, PKCS#12, PKCS#7 or DER files")
                     }
                 }
             }
@@ -182,12 +194,17 @@ struct DeploymentRow: View {
                 if cert?.isMonitored != true {
                     Button("Deploy Now") { Task { await model.deploy(deployment.id) } }
                         .disabled(cert?.current == nil)
+                        .help("Install the current certificate on this host now")
                 }
                 Button("Check What's Live") { Task { await model.check(deployment.id, logResult: true) } }
+                    .help("Check which certificate this service is serving now")
                 Button("Edit…", action: onEdit)
+                    .help("Change this deployment's target, paths and options")
                 Divider()
                 Button("Remove", role: .destructive) { model.deleteDeployment(deployment.id) }
+                    .help("Stop managing this deployment; nothing on the host changes")
             } label: { Image(systemName: "ellipsis.circle") }
+                .help("Deployment actions")
                 .menuStyle(.borderlessButton)
                 .fixedSize()
                 .disabled(model.busy.contains(deployment.id))
@@ -214,17 +231,21 @@ struct DeploymentEditor: View {
                 Picker("Certificate", selection: $deployment.certificateID) {
                     ForEach(model.inventory.certificates) { Text($0.name).tag($0.id) }
                 }
+                .help("Which certificate this deployment installs")
                 Picker("Host", selection: $deployment.hostID) {
                     ForEach(model.inventory.hosts) { Text($0.name).tag($0.id) }
                 }
+                .help("The host to install it on")
                 Picker("Target", selection: $deployment.kind) {
                     ForEach(DeploymentKind.allCases) { Text($0.displayName).tag($0) }
                 }
+                .help("The kind of service, which decides how the certificate is installed")
                 if deployment.kind == .pihole {
                     TextField("TLS file", text: $deployment.certPath, prompt: Text("/etc/pihole/tls.pem"))
                     Toggle("Set Pi-hole's web domain to \(model.certificate(deployment.certificateID)?.domains.first ?? "the certificate's first name")",
                            isOn: Binding(get: { deployment.flag(.piholeSetDomain) },
                                          set: { deployment.options[DeploymentOption.piholeSetDomain.rawValue] = $0 ? "true" : "false" }))
+                        .help("Also set Pi-hole's webserver.domain so its redirects match the certificate")
                     VStack(alignment: .leading) {
                         TextField("Docker container", text: option(.restartTarget), prompt: Text("Leave empty for a native install"))
                         Text("For a container, the TLS file is its path on the host.").font(.caption).foregroundStyle(.secondary)
@@ -240,6 +261,7 @@ struct DeploymentEditor: View {
                     Toggle("Use for the TrueNAS web UI", isOn: Binding(
                         get: { deployment.flag(.truenasUI) },
                         set: { deployment.options[DeploymentOption.truenasUI.rawValue] = $0 ? "true" : "false" }))
+                        .help("Make this the certificate for TrueNAS's own web interface")
                     VStack(alignment: .leading) {
                         TextField("Catalog apps", text: option(.truenasApps), prompt: Text("nextcloud, minio"))
                         Text("Apps to point at this certificate. Apps already using an older copy of it are updated automatically. Requires TrueNAS 24.10 or later.")
@@ -251,6 +273,7 @@ struct DeploymentEditor: View {
                         Text("PEM (certificate + key files)").tag("pem")
                         Text("PKCS#12 (.pfx, e.g. Jellyfin)").tag("pkcs12")
                     }
+                    .help("PEM for separate certificate and key files, PKCS#12 for a single .pfx")
                     if deployment.isPKCS12 {
                         SecureField(".pfx password", text: $pfxPassword, prompt: Text("Optional — must match the app's setting; kept in the Keychain"))
                     }
@@ -286,8 +309,10 @@ struct DeploymentEditor: View {
                     }
                 }
                 Toggle("Enabled", isOn: $deployment.enabled)
+                    .help("Disabled deployments are never checked or deployed")
                 Section {
                     Toggle("Customize install script", isOn: $customizeScript)
+                        .help("Replace the built-in install steps for this deployment with your own script")
                     if customizeScript {
                         TextEditor(text: $script)
                             .font(.system(.caption, design: .monospaced))
@@ -296,6 +321,7 @@ struct DeploymentEditor: View {
                             Text("Runs with sh as \(model.host(deployment.hostID)?.username ?? "the SSH user"). Variables: $CERT $CHAIN $FULLCHAIN $KEY $TARGET_CERT $TARGET_KEY $TARGET_CHAIN $CERT_NAME $DOMAINS; helpers ck_install, ck_rollback.")
                                 .font(.caption).foregroundStyle(.secondary)
                             Button("Reset") { script = DeployScripts.template(for: deployment.kind) }
+                                .help("Restore the built-in script for this target")
                         }
                     }
                 } footer: {
@@ -309,7 +335,9 @@ struct DeploymentEditor: View {
                 if let saveError { Text(saveError).font(.caption).foregroundStyle(.red) }
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    .help("Close without saving changes")
                 Button(isNew ? "Add" : "Save", action: save).keyboardShortcut(.defaultAction)
+                    .help(isNew ? "Add this deployment" : "Save changes to this deployment")
                     .disabled(deployment.kind.usesFilePaths && deployment.kind != .custom && deployment.certPath.isEmpty
                               || deployment.kind == .containerApp && !deployment.isPKCS12 && deployment.keyPath.isEmpty
                               || deployment.kind == .truenas && !deployment.flag(.truenasUI) && deployment.truenasApps.isEmpty)
@@ -389,11 +417,13 @@ struct NewCertificateSheet: View {
                 Picker("Key type", selection: $algorithm) {
                     ForEach(KeyAlgorithm.allCases) { Text($0.rawValue).tag($0) }
                 }
+                .help("Key algorithm; ECDSA P-256 suits almost everything")
             }
             .formStyle(.grouped)
             HStack {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
+                    .help("Close without creating a certificate")
                 Button("Create") {
                     var c = ManagedCertificate(name: name.isEmpty ? parsed[0] : name, domains: parsed)
                     c.keyAlgorithm = algorithm
@@ -402,6 +432,7 @@ struct NewCertificateSheet: View {
                 }
                 .keyboardShortcut(.defaultAction)
                 .disabled(parsed.isEmpty)
+                .help("Create the certificate; it's issued on the next rotation pass, or use Issue")
             }
             .padding()
         }

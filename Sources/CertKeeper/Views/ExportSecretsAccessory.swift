@@ -23,6 +23,9 @@ final class ExportSecretsAccessory: NSObject {
 
         password.placeholderString = "Password (at least 8 characters)"
         confirm.placeholderString = "Confirm password"
+        include.toolTip = "Add the Cloudflare token, ACME key, private keys and host passwords, encrypted with a password"
+        password.toolTip = "Encrypts the secrets; you'll need it to import them"
+        confirm.toolTip = "Type the password again"
 
         // Indent the note under the checkbox's title, past the box itself.
         let noteRow = NSStackView(views: [note])

@@ -37,6 +37,7 @@ struct OverviewView: View {
                     Label(model.maintenanceRunning ? "Running…" : "Run Rotation Pass", systemImage: "arrow.clockwise")
                 }
                 .disabled(model.maintenanceRunning)
+                .help("Renew certificates that are due, check every deployment, and redeploy any that are out of date")
             }
 
             if certs.isEmpty {
@@ -91,6 +92,7 @@ struct SetupBanner: View {
             }
             Spacer()
             Button("Open Settings") { openSettings() }
+                .help("Add your Cloudflare token and Let's Encrypt account details")
         }
         .padding()
         .background(.yellow.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
@@ -148,6 +150,7 @@ struct ActivityView: View {
         }
         .toolbar {
             Button("Clear", systemImage: "trash") { model.inventory.log.removeAll() }
+                .help("Delete every entry in the activity log")
         }
         .navigationTitle("Activity")
     }

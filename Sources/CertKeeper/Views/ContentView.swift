@@ -30,6 +30,7 @@ struct ContentView: View {
                         .tag(SidebarItem.certificate(cert.id))
                         .contextMenu {
                             Button("Delete", role: .destructive) { model.deleteCertificate(cert.id) }
+                                .help("Delete this certificate, its deployments and its private key")
                         }
                     }
                 }
@@ -43,6 +44,7 @@ struct ContentView: View {
                             .tag(SidebarItem.host(host.id))
                             .contextMenu {
                                 Button("Delete", role: .destructive) { model.deleteHost(host.id) }
+                                    .help("Delete this host, its deployments and its stored password")
                             }
                     }
                 }
@@ -52,8 +54,11 @@ struct ContentView: View {
                 ToolbarItem {
                     Menu {
                         Button("New Certificate…") { showingAddCert = true }
+                            .help("Create a certificate for one or more domain names")
                         Button("New Host…") { showingAddHost = true }
+                            .help("Add a server or device to manage over SSH")
                     } label: { Label("Add", systemImage: "plus") }
+                    .help("Add a certificate or host")
                 }
             }
         } detail: {
@@ -82,7 +87,7 @@ struct ContentView: View {
             }
         }
         .alert("Storage problem", isPresented: .constant(model.loadError != nil)) {
-            Button("OK") { model.loadError = nil }
+            Button("OK") { model.loadError = nil }.help("Dismiss this message")
         } message: { Text(model.loadError ?? "") }
     }
 }

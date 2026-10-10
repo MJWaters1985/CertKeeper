@@ -101,6 +101,7 @@ enum ConfigTransferUI {
     private static func askImportPassword(file: ConfigTransfer.File, count: Int) -> [(Keychain.Item, String)]? {
         let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
         field.placeholderString = "Password"
+        field.toolTip = "The password used when this configuration was exported"
         var message = "This file contains \(count) encrypted secrets. Enter the password used to export it."
         while true {
             let alert = NSAlert()
