@@ -154,7 +154,9 @@ public final class AppModel {
         if inventory.log.count > 1000 { inventory.log.removeLast(inventory.log.count - 1000) }
     }
 
-    private func withBusy<T>(_ id: UUID, _ body: () async throws -> T) async rethrows -> T {
+    /// Marks `id` as in progress for the duration of `body`. Operations on the same certificate or
+    /// deployment check `busy` first, so a rotation pass never overlaps a deploy the user started.
+    func withBusy<T>(_ id: UUID, _ body: () async throws -> T) async rethrows -> T {
         busy.insert(id)
         defer { busy.remove(id) }
         return try await body()
@@ -267,7 +269,7 @@ public final class AppModel {
     // MARK: - Issuance
 
     public func issue(_ certID: UUID) async {
-        guard let cert = certificate(certID) else { return }
+        guard let cert = certificate(certID), !busy.contains(certID) else { return }
         await withBusy(certID) {
             log(.info, "Requesting certificate for \(cert.domains.joined(separator: ", "))",
                 detail: inventory.settings.useStaging ? "Let's Encrypt STAGING" : "Let's Encrypt production")
@@ -382,7 +384,8 @@ public final class AppModel {
 
     public func deploy(_ deploymentID: UUID) async {
         guard let d = inventory.deployments.first(where: { $0.id == deploymentID }),
-              let cert = certificate(d.certificateID), let host = host(d.hostID) else { return }
+              let cert = certificate(d.certificateID), let host = host(d.hostID),
+              !busy.contains(deploymentID) else { return }
         await withBusy(deploymentID) {
             let label = "\(cert.name) → \(host.name) (\(d.kind.displayName))"
             do {
@@ -396,7 +399,7 @@ public final class AppModel {
                 log(.success, "Deployed \(label)", detail: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
                 // Give services that restart asynchronously a moment before verifying.
                 try? await Task.sleep(for: .seconds([.truenas, .unifiOS, .opnsense, .containerApp, .pihole].contains(d.kind) ? 8 : 2))
-                await check(deploymentID, logResult: true)
+                await performCheck(deploymentID, logResult: true)  // already marked busy by this deploy
             } catch {
                 updateDeployment(deploymentID) { $0.lastError = error.localizedDescription }
                 log(.error, "Deploy failed: \(label)", detail: error.localizedDescription)
@@ -405,7 +408,14 @@ public final class AppModel {
     }
 
     /// Reads what the host (and, if configured, its TLS endpoint) is actually using and records it.
+    /// Checks what a deployment's host is actually serving. Skipped while the deployment is busy,
+    /// e.g. being deployed, since its state is about to change.
     public func check(_ deploymentID: UUID, logResult: Bool = false) async {
+        guard !busy.contains(deploymentID) else { return }
+        await withBusy(deploymentID) { await performCheck(deploymentID, logResult: logResult) }
+    }
+
+    func performCheck(_ deploymentID: UUID, logResult: Bool) async {
         guard let d = inventory.deployments.first(where: { $0.id == deploymentID }),
               let host = host(d.hostID) else { return }
         do {
