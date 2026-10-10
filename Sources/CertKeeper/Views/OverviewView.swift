@@ -8,61 +8,67 @@ struct OverviewView: View {
     var body: some View {
         let certs = model.inventory.certificates
         let deps = model.inventory.deployments
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                if !model.inventory.settings.acceptedTermsOfService || Keychain.get(.cloudflareToken) == nil {
-                    SetupBanner()
-                }
-                HStack(spacing: 12) {
-                    Tile(title: "Certificates", value: "\(certs.count)", systemImage: "checkmark.seal")
-                    Tile(title: "Need renewal", value: "\(certs.filter(model.needsIssuance).count)",
-                         systemImage: "clock.badge.exclamationmark", tint: certs.contains(where: model.needsIssuance) ? .orange : nil)
-                    Tile(title: "Deployments", value: "\(deps.count)", systemImage: "shippingbox")
-                    Tile(title: "Out of date", value: "\(deps.filter(model.needsDeployment).count)",
-                         systemImage: "arrow.triangle.2.circlepath", tint: deps.contains(where: model.needsDeployment) ? .orange : nil)
-                    Tile(title: "Hosts", value: "\(model.inventory.hosts.count)", systemImage: "server.rack")
-                }
-
-                HStack {
-                    Text("Expiry timeline").font(.headline)
-                    Spacer()
-                    if let last = model.lastMaintenance {
-                        Text("Last pass \(last.relative)").font(.caption).foregroundStyle(.secondary)
-                    }
-                    Button {
-                        Task { await model.runMaintenance() }
-                    } label: {
-                        Label(model.maintenanceRunning ? "Running…" : "Run Rotation Pass", systemImage: "arrow.clockwise")
-                    }
-                    .disabled(model.maintenanceRunning)
-                }
-
-                if certs.isEmpty {
-                    ContentUnavailableView("No certificates yet",
-                                           systemImage: "checkmark.seal",
-                                           description: Text("Add a host and run discovery to adopt existing certificates, or create a new certificate with +."))
-                } else {
-                    Table(certs.sorted { ($0.current?.notAfter ?? .distantPast) < ($1.current?.notAfter ?? .distantPast) }) {
-                        TableColumn("Certificate") { c in
-                            Button(c.name) { selection = .certificate(c.id) }.buttonStyle(.link)
-                        }
-                        TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1) }
-                        TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
-                            .width(110)
-                        TableColumn("Valid For") { c in ValidForCell(status: model.status(of: c), days: c.current?.daysRemaining) }
-                            .width(90)
-                        TableColumn("Status") { c in ManagementBadge(monitored: c.isMonitored) }.width(110)
-                        TableColumn("Deployed") { c in
-                            let ds = model.deployments(for: c.id)
-                            let current = ds.filter { !model.needsDeployment($0) && $0.enabled }.count
-                            Text("\(current)/\(ds.filter(\.enabled).count) current").foregroundStyle(current == ds.filter(\.enabled).count ? Color.secondary : Color.orange)
-                        }.width(110)
-                    }
-                    .frame(minHeight: 260)
-                }
+        // The table scrolls itself and fills whatever space the window leaves below the header, so it
+        // isn't wrapped in a ScrollView (a Table inside one can't take the available height).
+        VStack(alignment: .leading, spacing: 20) {
+            if !model.inventory.settings.acceptedTermsOfService || Keychain.get(.cloudflareToken) == nil {
+                SetupBanner()
             }
-            .padding(20)
+            HStack(spacing: 12) {
+                Tile(title: "Certificates", value: "\(certs.count)", systemImage: "checkmark.seal")
+                Tile(title: "Need renewal", value: "\(certs.filter(model.needsIssuance).count)",
+                     systemImage: "clock.badge.exclamationmark", tint: certs.contains(where: model.needsIssuance) ? .orange : nil)
+                Tile(title: "Deployments", value: "\(deps.count)", systemImage: "shippingbox")
+                Tile(title: "Out of date", value: "\(deps.filter(model.needsDeployment).count)",
+                     systemImage: "arrow.triangle.2.circlepath", tint: deps.contains(where: model.needsDeployment) ? .orange : nil)
+                Tile(title: "Hosts", value: "\(model.inventory.hosts.count)", systemImage: "server.rack")
+            }
+
+            HStack {
+                Text("Expiry timeline").font(.headline)
+                Spacer()
+                if let last = model.lastMaintenance {
+                    Text("Last pass \(last.relative)").font(.caption).foregroundStyle(.secondary)
+                }
+                Button {
+                    Task { await model.runMaintenance() }
+                } label: {
+                    Label(model.maintenanceRunning ? "Running…" : "Run Rotation Pass", systemImage: "arrow.clockwise")
+                }
+                .disabled(model.maintenanceRunning)
+            }
+
+            if certs.isEmpty {
+                ContentUnavailableView("No certificates yet",
+                                       systemImage: "checkmark.seal",
+                                       description: Text("Add a host and run discovery to adopt existing certificates, or create a new certificate with +."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Table(certs.sorted { ($0.current?.notAfter ?? .distantPast) < ($1.current?.notAfter ?? .distantPast) }) {
+                    TableColumn("Certificate") { c in
+                        Button(c.name) { selection = .certificate(c.id) }.buttonStyle(.link)
+                    }
+                    .width(min: 140, ideal: 200)
+                    TableColumn("Names") { c in Text(c.domains.joined(separator: ", ")).lineLimit(1).truncationMode(.middle) }
+                        .width(min: 160, ideal: 280)
+                    TableColumn("Expires") { c in Text(c.current?.notAfter.formatted(date: .abbreviated, time: .omitted) ?? "—") }
+                        .width(min: 90, ideal: 110, max: 150)
+                    TableColumn("Valid For") { c in ValidForCell(status: model.status(of: c), days: c.current?.daysRemaining) }
+                        .width(min: 70, ideal: 90, max: 130)
+                    TableColumn("Status") { c in ManagementBadge(monitored: c.isMonitored) }
+                        .width(min: 100, ideal: 115, max: 150)
+                    TableColumn("Deployed") { c in
+                        let ds = model.deployments(for: c.id)
+                        let current = ds.filter { !model.needsDeployment($0) && $0.enabled }.count
+                        Text("\(current)/\(ds.filter(\.enabled).count) current").foregroundStyle(current == ds.filter(\.enabled).count ? Color.secondary : Color.orange)
+                    }
+                    .width(min: 90, ideal: 110, max: 150)
+                }
+                .frame(maxWidth: .infinity, minHeight: 180, maxHeight: .infinity)
+            }
         }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .navigationTitle("Overview")
     }
 }
