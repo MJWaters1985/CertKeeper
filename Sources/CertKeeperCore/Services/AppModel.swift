@@ -770,7 +770,8 @@ public final class AppModel {
         d.deployedNotAfter = endpoint.summary?.notAfter
         d.lastChecked = Date()
         let secretKeys = Set(DeploymentOption.secrets.map(\.rawValue))
-        for (key, value) in endpoint.options ?? [:] where key != DeploymentOption.verifyPort.rawValue && !value.isEmpty {
+        for (key, value) in endpoint.options ?? [:]
+        where key != DeploymentOption.verifyPort.rawValue && key != "monitor_suggested" && !value.isEmpty {
             if secretKeys.contains(key) { try? secrets.set(value, for: .deploymentSecret(d.id, key)) }
             else { d.options[key] = value }
         }

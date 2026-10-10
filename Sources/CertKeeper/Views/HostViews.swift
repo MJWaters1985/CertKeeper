@@ -164,20 +164,24 @@ struct AdoptControl: View {
                     model.adopt(endpoint, hostID: hostID, target: .monitor)
                 }
             } label: {
-                Text("Adopt")
+                Text(monitorSuggested ? "Monitor" : "Adopt")
             } primaryAction: {
-                model.adopt(endpoint, hostID: hostID)
+                model.adopt(endpoint, hostID: hostID, target: monitorSuggested ? .monitor : .automatic)
             }
             .menuStyle(.button)
             .fixedSize()
             .disabled(names.isEmpty)
 
-            Text(automatic.map { "uses \($0.name)" } ?? "creates a new certificate")
+            Text(monitorSuggested ? "renewed by the device itself" : (automatic.map { "uses \($0.name)" } ?? "creates a new certificate"))
                 .font(.caption2).foregroundStyle(.secondary)
         }
         .help(automatic.map { "Click to deploy the managed certificate “\($0.name)” here. Use the menu to choose another." }
               ?? "No managed certificate covers these names — clicking creates one. Use the menu to attach an existing one instead.")
     }
+
+    /// The device renews this certificate itself (e.g. UniFi OS's own ACME client), so watch it rather
+    /// than deploy over it.
+    var monitorSuggested: Bool { endpoint.options?["monitor_suggested"] == "true" }
 
     func describe(_ coverage: AppModel.Coverage) -> String {
         switch coverage {

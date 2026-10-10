@@ -185,3 +185,63 @@ struct FakeUOS {
         #expect(report.warnings == ["something"])
     }
 }
+
+@Suite struct UniFiActiveCertTests {
+    let uuidName = "972c79ad-1673-41fa-a36d-f64f4644cc07"
+
+    func withActiveCert(_ conf: String?) throws -> (FakeUOS, Discovery.Report) {
+        let uos = try FakeUOS()
+        let (pem, key) = try selfSigned(["unifi.example.com"])
+        try pem.write(to: uos.dir.appendingPathComponent("\(uuidName).crt"), atomically: true, encoding: .utf8)
+        try key.write(to: uos.dir.appendingPathComponent("\(uuidName).key"), atomically: true, encoding: .utf8)
+        if let conf {
+            let http = uos.dir.appendingPathComponent("http")
+            try FileManager.default.createDirectory(at: http, withIntermediateDirectories: true)
+            try conf.write(to: http.appendingPathComponent("local-certs.conf"), atomically: true, encoding: .utf8)
+        }
+        return (uos, Discovery.parse(try runShell(Discovery.script, path: uos.bin.path, env: uos.env)))
+    }
+
+    @Test func reportsTheActiveCertificateNotTheFallback() throws {
+        let (uos, report) = try withActiveCert("""
+        ssl_certificate     /data/unifi-core/config/\(uuidName).crt;
+        ssl_certificate_key /data/unifi-core/config/\(uuidName).key;
+        """)
+        defer { uos.cleanup() }
+        let eps = report.endpoints.filter { $0.kind == .unifiOS }
+        #expect(eps.count == 1, "the fallback isn't listed while a custom certificate is active")
+        let ep = try #require(eps.first)
+        #expect(ep.label == "UniFi OS Server (active: \(uuidName).crt)")
+        #expect(ep.certPath == uos.dir.path + "/\(uuidName).crt")
+        #expect(ep.summary?.dnsNames == ["unifi.example.com"])
+        #expect(ep.options?["monitor_suggested"] == "true")
+        #expect(ep.options?["verify_port"] == "11443")
+        #expect(ep.note?.contains("Monitor only") == true)
+    }
+
+    @Test func findsThePathInAnUnfamiliarFormat() throws {
+        let (uos, report) = try withActiveCert(#"{"cert": "/data/unifi-core/config/\#(uuidName).crt"}"#)
+        defer { uos.cleanup() }
+        #expect(report.endpoints.first { $0.kind == .unifiOS }?.certPath == uos.dir.path + "/\(uuidName).crt")
+    }
+
+    @Test func fallsBackWhenNoCustomCertificateIsActive() throws {
+        let (uos, report) = try withActiveCert("ssl_certificate /data/unifi-core/config/unifi-core.crt;")
+        defer { uos.cleanup() }
+        let ep = try #require(report.endpoints.first { $0.kind == .unifiOS })
+        #expect(ep.label == "UniFi OS Server (unifi-core)")
+        #expect(ep.options?["monitor_suggested"] == nil)
+    }
+
+    @MainActor @Test func adoptingTheHintedEndpointDoesntCopyTheHint() throws {
+        let (uos, report) = try withActiveCert("ssl_certificate /data/unifi-core/config/\(uuidName).crt;")
+        defer { uos.cleanup() }
+        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"),
+                         secrets: MemorySecretStore())
+        let host = ManagedHost(name: "unifi", address: "unifi.example.com"); m.addHost(host)
+        let d = m.adopt(try #require(report.endpoints.first), hostID: host.id, target: .monitor)
+        #expect(d.options["monitor_suggested"] == nil)
+        #expect(m.certificate(d.certificateID)?.isMonitored == true)
+        #expect(d.verifyEndpoint == "unifi.example.com:11443")
+    }
+}

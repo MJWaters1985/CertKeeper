@@ -418,11 +418,30 @@ public enum Discovery {
     if [ ! -s "${TMPDIR:-/tmp}/ck-unifi.$$" ] && { command -v uosserver >/dev/null 2>&1 || [ -x /usr/local/bin/uosserver ] || systemctl cat uosserver.service >/dev/null 2>&1; }; then
       echo "@@WARN UniFi OS Server is installed but no unifi-core.crt was found (running as uid $(id -u); checked /data, /mnt/data, /home/*/.local/share/containers and /var/lib/containers volumes; /home entries: $(ls -d /home/*/.local/share/containers/storage/volumes/*/_data 2>&1 | tr '\n' ' '))"
     fi
+    # unifi-core.crt is UniFi's self-signed fallback. When a custom certificate is active (uploaded, or
+    # issued by UniFi OS's own ACME client), http/local-certs.conf points the web server at it instead.
+    uos_active_cert() {
+      conf="$1/http/local-certs.conf"
+      [ -f "$conf" ] || return 0
+      ref=$(sed -n 's/^[[:space:]]*ssl_certificate[[:space:]][[:space:]]*\([^;[:space:]]*\).*/\1/p' "$conf" | head -n 1)
+      [ -n "$ref" ] || ref=$(grep -oE "[^[:space:]\"';]+\.crt" "$conf" | head -n 1)
+      [ -n "$ref" ] || return 0
+      case "$(basename "$ref")" in unifi-core.crt|unifi-core-direct.crt) return 0 ;; esac
+      [ -f "$1/$(basename "$ref")" ] && echo "$1/$(basename "$ref")"
+    }
     while read -r d; do
       case "$d" in
-        */containers/storage/volumes/*) emit unifiOS "UniFi OS Server (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d;verify_port=11443" ;;
-        *) emit unifiOS "UniFi OS console (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d" ;;
+        */containers/storage/volumes/*) uos_kind="UniFi OS Server"; uos_port=";verify_port=11443" ;;
+        *) uos_kind="UniFi OS console"; uos_port="" ;;
       esac
+      uos_active=$(uos_active_cert "$d")
+      if [ -n "$uos_active" ]; then
+        emit unifiOS "$uos_kind (active: $(basename "$uos_active"))" "$uos_active" "${uos_active%.crt}.key" "" \
+          "unifi_dir=$d;monitor_suggested=true$uos_port" \
+          "Issued and renewed by UniFi OS itself. Adopt it as Monitor only; a CertKeeper deploy here would be overwritten."
+      else
+        emit unifiOS "$uos_kind (unifi-core)" "$d/unifi-core.crt" "$d/unifi-core.key" "" "unifi_dir=$d$uos_port"
+      fi
     done < "${TMPDIR:-/tmp}/ck-unifi.$$"
     rm -f "${TMPDIR:-/tmp}/ck-unifi.$$"
 
