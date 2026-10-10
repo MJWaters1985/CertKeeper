@@ -297,7 +297,13 @@ struct DeploymentEditor: View {
                 if deployment.kind.usesFilePaths {
                     TextField("File owner (optional)", text: option(.fileOwner), prompt: Text("user:group, e.g. 568:568 for TrueNAS apps"))
                 }
-                TextField("Verify TLS endpoint", text: $deployment.verifyEndpoint, prompt: Text("host.example.com:443 (optional)"))
+                VStack(alignment: .leading) {
+                    TextField("Verify TLS endpoint", text: $deployment.verifyEndpoint, prompt: Text("host.example.com:443 (optional)"))
+                    if model.certificate(deployment.certificateID)?.isMonitored == true {
+                        Text("Monitor only: leave empty to read the certificate in use on the host over SSH instead, for services you can't reach from this Mac.")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 Toggle("Enabled", isOn: $deployment.enabled)
                 Section {
                     Toggle("Customize install script", isOn: $customizeScript)

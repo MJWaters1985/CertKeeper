@@ -548,25 +548,40 @@ public final class AppModel {
         }
     }
 
-    /// Monitor only: look at what the endpoint serves over TLS (never files on the host — another
-    /// system decides which certificate is live) and warn when it nears expiry.
+    /// Monitor only: watch what the TLS endpoint serves, or — when the deployment has no endpoint (a
+    /// service you can't reach from this Mac) — the certificate discovery finds in use on the host.
+    /// An endpoint that's set but unreachable is an error; it never silently switches to the host.
     private func checkMonitored(_ d: Deployment, cert: ManagedCertificate, host: ManagedHost, logResult: Bool) async {
-        guard !d.verifyEndpoint.isEmpty else {
-            updateDeployment(d.id) { $0.lastError = "Monitor-only deployments need a TLS endpoint to watch"; $0.lastChecked = Date() }
-            return
-        }
-        var served: TLSProbe.Served?
-        var failure: Error?
-        for attempt in 0..<3 {
-            do { served = try await TLSProbe.fetchServed(endpoint: d.verifyEndpoint); failure = nil; break }
-            catch { failure = error }
-            if attempt < 2 { try? await Task.sleep(for: .seconds(3)) }
-        }
-        guard let served, let leaf = served.chain.first else {
-            let message = "Couldn't reach \(d.verifyEndpoint): \(failure?.localizedDescription ?? "no certificate presented")"
+        func fail(_ message: String) {
             if d.lastError != message { log(.warning, "\(host.name): monitor check failed", detail: message) }
             updateDeployment(d.id) { $0.lastError = message; $0.lastChecked = Date() }
-            return
+        }
+        let leaf: CertificateSummary
+        var chainComplete: Bool?
+        if d.verifyEndpoint.isEmpty {
+            do {
+                let report = try await Discovery.run(on: host, ssh: ssh)
+                guard let found = Discovery.relevantEndpoints(for: d, in: report.endpoints).compactMap(\.summary).first else {
+                    return fail("Discovery on \(host.name) didn't find the \(d.kind.displayName) certificate")
+                }
+                leaf = found
+            } catch {
+                return fail("Couldn't read the certificate on \(host.name): \(error.localizedDescription)")
+            }
+        } else {
+            var served: TLSProbe.Served?
+            var failure: Error?
+            for attempt in 0..<3 {
+                do { served = try await TLSProbe.fetchServed(endpoint: d.verifyEndpoint); failure = nil; break }
+                catch { failure = error }
+                if attempt < 2 { try? await Task.sleep(for: .seconds(3)) }
+            }
+            guard let served, let first = served.chain.first else {
+                return fail("Couldn't reach \(d.verifyEndpoint): \(failure?.localizedDescription ?? "no certificate presented")"
+                    + ". If this service isn't reachable from this Mac, clear the deployment's TLS endpoint to read the certificate on the host instead.")
+            }
+            leaf = first
+            if served.exact { chainComplete = TLSProbe.chainIsComplete(served.chain) }
         }
         let window = renewalWindow(for: cert)
         let previousDays = d.deployedNotAfter.map { Int(floor($0.timeIntervalSinceNow / 86_400)) }
@@ -575,7 +590,7 @@ public final class AppModel {
             $0.lastError = nil
             $0.deployedSHA256 = leaf.sha256
             $0.deployedNotAfter = leaf.notAfter
-            if served.exact { $0.servedChainComplete = TLSProbe.chainIsComplete(served.chain) }
+            $0.servedChainComplete = chainComplete  // nil when read from the host: can't judge what's sent
         }
         updateCertificate(cert.id) { $0.current = leaf; $0.lastError = nil }
         if leaf.isExpired {

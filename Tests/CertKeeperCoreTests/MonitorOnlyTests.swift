@@ -88,11 +88,22 @@ import Testing
         #expect(!model.inventory.log.contains { $0.message.hasPrefix("Deploying") })
     }
 
+    @Test func emptyEndpointReadsTheHostInsteadOfTLS() async throws {
+        let d = model.adopt(try endpoint(), hostID: host.id, target: .monitor)
+        let i = model.inventory.deployments.firstIndex { $0.id == d.id }!
+        model.inventory.deployments[i].verifyEndpoint = ""
+        await model.check(d.id)
+        let after = model.inventory.deployments[i]
+        #expect(after.lastError?.hasPrefix("Couldn't read the certificate on unifi:") == true, "went over SSH, not TLS")
+        #expect(after.lastError?.contains("Couldn't reach") == false)
+    }
+
     @Test func unreachableEndpointIsReportedNotSilentlyIgnored() async throws {
         let d = model.adopt(try endpoint(), hostID: host.id, target: .monitor)
         await model.check(d.id)
         let after = try #require(model.inventory.deployments.first { $0.id == d.id })
         #expect(after.lastError?.contains("Couldn't reach certkeeper-test.invalid:11443") == true)
+        #expect(after.lastError?.contains("clear the deployment's TLS endpoint") == true, "suggests the host fallback")
         #expect(model.inventory.log.contains { $0.message.contains("monitor check failed") })
         if case .error = model.state(of: after) {} else { Issue.record("expected an error state") }
     }

@@ -140,7 +140,9 @@ struct DeploymentStateBadge: View {
                 Text("Not checked yet").font(.caption).foregroundStyle(.secondary)
             case .watching(let days):
                 Label("Monitored · \(days)d", systemImage: "eye.fill").font(.caption).foregroundStyle(.green)
-                    .help("Renewed by another system; CertKeeper watches what \(deployment.verifyEndpoint) serves.")
+                    .help(deployment.verifyEndpoint.isEmpty
+                          ? "Renewed by another system; CertKeeper reads the certificate in use on the host."
+                          : "Renewed by another system; CertKeeper watches what \(deployment.verifyEndpoint) serves.")
             case .expiringSoon(let days):
                 Label("Expires in \(days)d", systemImage: "eye.trianglebadge.exclamationmark.fill").font(.caption).foregroundStyle(.orange)
                     .help("Monitored, not renewed by CertKeeper. The system that renews it seems to have stopped.")
