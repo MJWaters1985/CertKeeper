@@ -362,36 +362,87 @@ public enum DeployScripts {
     """#
 
     static let opnsense = #"""
-    # Imports into System › Trust › Certificates (replacing a previous CertKeeper import with
-    # the same description, keeping its refid so other references stay valid) and assigns it
-    # to the web GUI. OPNsense keeps automatic config history in /conf/backup.
-    cp -p /conf/config.xml "/conf/config.xml.certkeeper-$STAMP.bak"
-    CK_DESCR="$CERT_SLUG" CK_FULLCHAIN="$FULLCHAIN" CK_KEY="$KEY" /usr/local/bin/php <<'PHP'
+    # OPNsense: imports into System › Trust › Certificates (updating CertKeeper's previous entry with
+    # the same description, so its refid and anything referencing it stay valid), points the web GUI
+    # at it, then checks the result through OPNsense's own certificate model before restarting the
+    # GUI. Any mismatch restores the config.xml backup and stops with the GUI untouched.
+    OPN_PHP=/usr/local/bin/php
+    [ -x "$OPN_PHP" ] || OPN_PHP=php
+    BACKUP="/conf/config.xml.certkeeper-$STAMP.bak"
+    cp -p /conf/config.xml "$BACKUP"
+    ls -1t /conf/config.xml.certkeeper-*.bak 2>/dev/null | tail -n +4 | while read -r old; do rm -f "$old"; done
+    REFID_FILE="$CK_DIR/refid"
+
+    CK_DESCR="$CERT_SLUG" CK_FULLCHAIN="$FULLCHAIN" CK_KEY="$KEY" CK_REFID_FILE="$REFID_FILE" "$OPN_PHP" <<'PHP'
     <?php
     require_once('config.inc');
     require_once('util.inc');
     global $config;
+
+    function ck_uuid() {
+        $b = random_bytes(16);
+        $b[6] = chr((ord($b[6]) & 0x0f) | 0x40);
+        $b[8] = chr((ord($b[8]) & 0x3f) | 0x80);
+        $h = bin2hex($b);
+        return substr($h, 0, 8) . '-' . substr($h, 8, 4) . '-' . substr($h, 12, 4) . '-' . substr($h, 16, 4) . '-' . substr($h, 20);
+    }
+
     $descr = getenv('CK_DESCR');
-    $crt = file_get_contents(getenv('CK_FULLCHAIN'));
-    $prv = file_get_contents(getenv('CK_KEY'));
+    $crt = base64_encode(file_get_contents(getenv('CK_FULLCHAIN')));
+    $prv = base64_encode(file_get_contents(getenv('CK_KEY')));
     if (!isset($config['cert']) || !is_array($config['cert'])) { $config['cert'] = []; }
     if (isset($config['cert']['refid'])) { $config['cert'] = [$config['cert']]; }
+
     $refid = null;
+    $othersHaveUUID = false;
     foreach ($config['cert'] as $i => $c) {
+        if (!empty($c['@attributes']['uuid'])) { $othersHaveUUID = true; }
         if (($c['descr'] ?? '') === $descr) {
             $refid = $c['refid'];
-            $config['cert'][$i]['crt'] = base64_encode($crt);
-            $config['cert'][$i]['prv'] = base64_encode($prv);
+            $config['cert'][$i]['crt'] = $crt;
+            $config['cert'][$i]['prv'] = $prv;
         }
     }
     if ($refid === null) {
         $refid = uniqid();
-        $config['cert'][] = ['refid' => $refid, 'descr' => $descr, 'crt' => base64_encode($crt), 'prv' => base64_encode($prv)];
+        $entry = ['refid' => $refid, 'descr' => $descr, 'crt' => $crt, 'prv' => $prv];
+        // Match the existing entries: since 24.7 the Trust model keys certificates by uuid.
+        if ($othersHaveUUID) { $entry = ['@attributes' => ['uuid' => ck_uuid()]] + $entry; }
+        $config['cert'][] = $entry;
     }
     $config['system']['webgui']['ssl-certref'] = $refid;
     write_config("CertKeeper installed certificate {$descr}");
-    echo "certificate refid {$refid}\n";
+    file_put_contents(getenv('CK_REFID_FILE'), $refid);
+    echo "imported {$descr} (refid {$refid})\n";
     PHP
+
+    # Fresh process: read it back the way the GUI will, through the Trust model and the saved config.
+    if ! CK_REFID="$(cat "$REFID_FILE")" CK_FULLCHAIN="$FULLCHAIN" "$OPN_PHP" <<'PHP'
+    <?php
+    require_once('config.inc');
+    $refid = getenv('CK_REFID');
+    $want = base64_encode(file_get_contents(getenv('CK_FULLCHAIN')));
+    $problems = [];
+    $cfg = OPNsense\Core\Config::getInstance()->object();
+    if ((string)$cfg->system->webgui->{'ssl-certref'} !== $refid) { $problems[] = 'web GUI does not point at the new certificate'; }
+    $found = false;
+    $mdl = new OPNsense\Trust\Cert();
+    foreach ($mdl->cert->iterateItems() as $uuid => $node) {
+        if ((string)$node->refid !== $refid) { continue; }
+        $found = true;
+        if ((string)$node->crt !== $want) { $problems[] = 'stored certificate differs from the one sent'; }
+        if (strlen((string)$uuid) < 32) { $problems[] = 'certificate entry has no uuid'; }
+    }
+    if (!$found) { $problems[] = "Trust model has no certificate with refid {$refid}"; }
+    if ($problems) { fwrite(STDERR, 'verification failed: ' . implode('; ', $problems) . "\n"); exit(1); }
+    echo "verified: Trust model has the certificate and the web GUI uses it\n";
+    PHP
+    then
+      cp -p "$BACKUP" /conf/config.xml
+      echo "restored /conf/config.xml from $BACKUP; web GUI not restarted" >&2
+      exit 1
+    fi
+
     configctl webgui restart
     echo "web GUI restarted"
     """#

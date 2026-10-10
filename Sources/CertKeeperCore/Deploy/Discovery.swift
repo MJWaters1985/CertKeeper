@@ -426,7 +426,13 @@ public enum Discovery {
         if (($c['refid'] ?? '') !== $ref) continue;
         $pem = base64_decode($c['crt'] ?? '');
         $end = '-----END CERTIFICATE-----';
-        echo "@@ENDPOINT opnsense|Web GUI (" . ($c['descr'] ?? '') . ")|||\n";
+        $descr = str_replace('|', '/', $c['descr'] ?? '');
+        $port = $config['system']['webgui']['port'] ?? '';
+        if ($port === '') { $port = '443'; }
+        $note = stripos($descr, 'ACME') !== false
+            ? "Issued by OPNsense's ACME Client plugin. Once CertKeeper has deployed, turn off this certificate's automatic renewal in Services > ACME Client > Certificates."
+            : '';
+        echo "@@ENDPOINT opnsense|Web GUI ({$descr})||||verify_port={$port}|{$note}\n";
         echo explode($end, $pem)[0] . $end . "\n@@END\n";
     }
     PHP
