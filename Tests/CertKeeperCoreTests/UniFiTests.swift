@@ -156,3 +156,30 @@ struct FakeUOS {
         #expect(r.status == 7)
     }
 }
+
+@Suite struct LineEndingTests {
+    /// UniFi OS Server's unifi-core.crt uses CRLF line endings; that hid it from discovery.
+    @Test func parsesEndpointsWhoseCertificateHasCRLFLineEndings() throws {
+        let (pem, _) = try selfSigned(["unifi.local"])
+        let crlf = pem.replacingOccurrences(of: "\n", with: "\r\n")
+        let output = "@@OS Linux Ubuntu 26.04.1 LTS\n"
+            + "@@ENDPOINT unifiOS|UniFi OS Server (unifi-core)|/v/unifi-core.crt|/v/unifi-core.key||unifi_dir=/v;verify_port=11443|\n"
+            + crlf + (crlf.hasSuffix("\r\n") ? "" : "\r\n") + "@@END\n"
+        let report = Discovery.parse(output)
+        let ep = try #require(report.endpoints.first)
+        #expect(ep.label == "UniFi OS Server (unifi-core)")
+        #expect(ep.summary?.dnsNames == ["unifi.local"], "the certificate itself parses too")
+        #expect(ep.options?["verify_port"] == "11443")
+    }
+
+    @Test func crlfThroughoutTheOutput() throws {
+        let (pem, _) = try selfSigned(["host.lan"])
+        let output = ("@@OS Linux\n@@ENDPOINT nginx|site|/c.pem|/k.pem||\n" + pem + "\n@@END\n@@WARN something\n")
+            .replacingOccurrences(of: "\n", with: "\r\n")
+        let report = Discovery.parse(output)
+        #expect(report.os == "Linux")
+        #expect(report.endpoints.count == 1)
+        #expect(report.endpoints.first?.summary?.dnsNames == ["host.lan"])
+        #expect(report.warnings == ["something"])
+    }
+}

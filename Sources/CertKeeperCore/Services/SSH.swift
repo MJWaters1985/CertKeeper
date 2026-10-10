@@ -9,6 +9,8 @@ public struct SSHRunner: Sendable {
         public let status: Int32
         public let stdout: String
         public let stderr: String
+        /// The remote command ssh ran (never includes the password, which goes on stdin).
+        public var remoteCommand: String = ""
         public var succeeded: Bool { status == 0 }
     }
 
@@ -106,8 +108,10 @@ public struct SSHRunner: Sendable {
                 remote = "sudo -n sh -s"
             }
         }
-        return try await Self.execute(sshPath, arguments(for: host, remoteCommand: remote),
-                                      environment: environment(for: host), stdin: input, timeout: timeout)
+        var result = try await Self.execute(sshPath, arguments(for: host, remoteCommand: remote),
+                                            environment: environment(for: host), stdin: input, timeout: timeout)
+        result.remoteCommand = remote
+        return result
     }
 
     /// Whether `sudo -n` works for this host's user (cached per host for the session).

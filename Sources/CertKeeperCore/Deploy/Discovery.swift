@@ -460,7 +460,10 @@ public enum Discovery {
         var current: DiscoveredEndpoint?
         var pem = ""
 
-        for raw in output.split(separator: "\n", omittingEmptySubsequences: false) {
+        // Split on any line break. In Swift "\r\n" is a single Character, so splitting on "\n" never
+        // breaks a CRLF line: a certificate file with Windows line endings (UniFi OS Server's) glued
+        // its last line to the following @@END, and the whole entry was dropped.
+        for raw in output.split(omittingEmptySubsequences: false, whereSeparator: \.isNewline) {
             let line = String(raw)
             if line.hasPrefix("@@OS ") {
                 os = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
@@ -511,6 +514,11 @@ public enum Discovery {
         if result.status == 255 {
             throw SSHRunner.SSHError(message: "SSH to \(host.name) failed: \(result.stderr)", result: result)
         }
+        // Keep the raw run for troubleshooting (public certificates only; the password never appears).
+        let raw = "host: \(host.name)\ncommand: \(result.remoteCommand)\nstatus: \(result.status)\n"
+            + "--- stderr\n\(result.stderr)\n--- stdout\n\(result.stdout)"
+        let rawURL = InventoryFile.directory.appendingPathComponent("last-discovery-\(host.name).txt")
+        try? raw.write(to: rawURL, atomically: true, encoding: .utf8)
         var report = parse(result.stdout)
         // Never drop evidence: a script that died part-way (timeout, error) can still print the OS line.
         if result.status != 0 {
@@ -518,7 +526,7 @@ public enum Discovery {
                 ? "Discovery was stopped after 120 s; sections after the slow one didn't run"
                 : "Discovery script exited with status \(result.status)")
         }
-        let stderr = result.stderr.split(separator: "\n").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        let stderr = result.stderr.split(whereSeparator: \.isNewline).map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         if !stderr.isEmpty {
             report.warnings.append("stderr: " + stderr.suffix(15).joined(separator: " | "))
         }

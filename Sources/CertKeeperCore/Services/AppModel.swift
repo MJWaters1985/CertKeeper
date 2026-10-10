@@ -539,7 +539,7 @@ public final class AppModel {
         do {
             let r = try await ssh.runChecked("id -un; uname -sr", on: host, timeout: 30)
             updateHost(hostID) { $0.lastSeen = Date() }
-            return "Connected as \(r.stdout.split(separator: "\n").joined(separator: " · "))"
+            return "Connected as \(r.stdout.split(whereSeparator: \.isNewline).joined(separator: " · "))"
         } catch {
             return error.localizedDescription
         }
