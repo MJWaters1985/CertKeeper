@@ -469,6 +469,83 @@ public enum Discovery {
     }
     PHP
     fi
+
+    # ---- Any other TLS service: match what each listening port serves to a certificate file ----
+    # Catches apps the sections above don't know (e.g. a Python or Go service that reads PEM files).
+    # Skipped on TrueNAS and OPNsense, which regenerate their certificate files from their own settings.
+    # Entries that duplicate one found above are dropped when the output is parsed.
+    if command -v openssl >/dev/null 2>&1 && ! command -v midclt >/dev/null 2>&1 && ! command -v configctl >/dev/null 2>&1; then
+      gt_root="${CK_ROOT:-}"
+      gt_fp() { openssl x509 -noout -fingerprint -sha256 2>/dev/null | sed 's/.*=//'; }
+      # The certificate a local port serves, giving up after ~3 s (some services accept and then wait).
+      gt_served() {
+        if command -v timeout >/dev/null 2>&1; then
+          echo | timeout 3 openssl s_client -connect "$1" -servername localhost 2>/dev/null | gt_fp
+        else  # e.g. minimal BusyBox systems: run it in the background and stop it if it hangs
+          echo | openssl s_client -connect "$1" -servername localhost > "$gt_list.out" 2>/dev/null &
+          gt_pid=$!; gt_i=0
+          while kill -0 "$gt_pid" 2>/dev/null && [ "$gt_i" -lt 30 ]; do sleep 0.1; gt_i=$((gt_i + 1)); done
+          kill "$gt_pid" 2>/dev/null
+          gt_fp < "$gt_list.out"
+        fi
+      }
+      gt_listeners() {  # "port pid" per TCP listener
+        if command -v ss >/dev/null 2>&1; then
+          ss -Htlnp 2>/dev/null | awk '{ n = split($4, a, ":"); pid = ""
+            if (match($0, /pid=[0-9]+/)) pid = substr($0, RSTART + 4, RLENGTH - 4)
+            print a[n], pid }'
+        else
+          netstat -tlnp 2>/dev/null | awk '$6 == "LISTEN" { n = split($4, a, ":"); split($7, p, "/"); print a[n], p[1] }'
+        fi
+      }
+      gt_list="${TMPDIR:-/tmp}/ck-tls.$$"
+      find "$gt_root/etc" "$gt_root/opt" "$gt_root/srv" "$gt_root/var/lib" "$gt_root/usr/local/etc" "$gt_root/home" -xdev -maxdepth 6 \
+        \( -path '*/etc/ssl/certs' -o -path '*/ca-certificates' -o -path '*/var/lib/docker' -o -path '*/var/lib/containers' \
+           -o -path '*/node_modules' -o -path '*/.cache' \) -prune -o \
+        -type f \( -name '*.pem' -o -name '*.crt' -o -name '*.cer' \) -size -64k -print 2>/dev/null |
+        while read -r f; do printf '%s %s\n' "$(gt_fp < "$f")" "$f"; done | awk 'NF == 2' > "$gt_list"
+      gt_listeners | sort -u | head -n 40 | while read -r port pid; do
+        [ -n "$port" ] || continue
+        fp=$(gt_served "127.0.0.1:$port")
+        [ -n "$fp" ] || fp=$(gt_served "[::1]:$port")
+        [ -n "$fp" ] || continue
+        proc=""; unit=""
+        if [ -n "$pid" ]; then
+          proc=$(ps -o comm= -p "$pid" 2>/dev/null | head -n 1 | sed 's/^ *//')
+          unit=$(ps -o unit= -p "$pid" 2>/dev/null | head -n 1 | tr -d ' ')
+        fi
+        # the file holding the served certificate; prefer the one with the most certificates (full chain)
+        cert=""; best=0
+        for c in $(awk -v fp="$fp" '$1 == fp { print $2 }' "$gt_list"); do
+          n=$(grep -c 'BEGIN CERTIFICATE' "$c" 2>/dev/null)
+          if [ "${n:-0}" -gt "$best" ]; then best=$n; cert=$c; fi
+        done
+        if [ -z "$cert" ]; then
+          echo "@@WARN TLS on port $port${proc:+ ($proc)}: the certificate it serves isn't in a file CertKeeper can find"
+          continue
+        fi
+        # its private key: a file in the same folder with the same public key
+        want=$(openssl x509 -in "$cert" -noout -pubkey 2>/dev/null)
+        key=""
+        for k in "$(dirname "$cert")"/*; do
+          [ -f "$k" ] && [ "$k" != "$cert" ] || continue
+          if [ "$(openssl pkey -in "$k" -pubout 2>/dev/null)" = "$want" ]; then key=$k; break; fi
+        done
+        opts="cert_format=pem;verify_port=$port;generic=true"
+        # restart through the service's own unit, never a user session (user@N.service) or scope
+        case "$unit" in
+          user@*|*.scope|"") ;;
+          *.service) opts="$opts;restart_target=systemd:$unit" ;;
+        esac
+        own=$(stat -c '%U:%G' "$cert" 2>/dev/null || stat -f '%Su:%Sg' "$cert" 2>/dev/null)
+        [ -n "$own" ] && opts="$opts;file_owner=$own"
+        note=""
+        [ -n "$key" ] || note="No matching private key next to the certificate; set the key path before deploying."
+        case "$opts" in *restart_target=*) ;; *) note="${note:+$note }No systemd service found to restart; set one before deploying." ;; esac
+        emit containerApp "TLS service on :$port${proc:+ ($proc)}" "$cert" "$key" "" "$opts" "$note"
+      done
+      rm -f "$gt_list" "$gt_list.out"
+    fi
     exit 0
     """#
 
@@ -512,6 +589,13 @@ public enum Discovery {
                 current = nil
             } else if current != nil {
                 pem += line + "\n"
+            }
+        }
+        // Drop catch-all TLS entries that duplicate one a specific section found (same file or same certificate).
+        let specific = endpoints.filter { $0.options?["generic"] != "true" }
+        endpoints.removeAll { ep in
+            ep.options?["generic"] == "true" && specific.contains { other in
+                other.certPath == ep.certPath || (ep.summary != nil && other.summary?.sha256 == ep.summary?.sha256)
             }
         }
         return Report(os: os, endpoints: endpoints, warnings: warnings)

@@ -22,11 +22,18 @@ import Testing
         p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
         p.arguments = args + ["-in", url.path]
         p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        let out = Pipe(); p.standardOutput = out; p.standardError = out
+        // Separate pipes: sharing one let stderr ("MAC verified OK") land inside a PEM block under load.
+        let out = Pipe(), err = Pipe()
+        p.standardOutput = out
+        p.standardError = err
         try p.run()
+        var errData = Data()
+        let reader = Thread { errData = err.fileHandleForReading.readDataToEndOfFile() }
+        reader.start()
         let data = out.fileHandleForReading.readDataToEndOfFile()
         p.waitUntilExit()
-        return (String(decoding: data, as: UTF8.self), p.terminationStatus)
+        while reader.isExecuting { Thread.sleep(forTimeInterval: 0.01) }
+        return (String(decoding: data, as: UTF8.self) + "\n" + String(decoding: errData, as: UTF8.self), p.terminationStatus)
     }
 
     func certCount(_ s: String) -> Int { s.components(separatedBy: "BEGIN CERTIFICATE").count - 1 }
