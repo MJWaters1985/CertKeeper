@@ -13,9 +13,17 @@ struct HostDetailView: View {
         if let host = model.host(hostID) {
             Form {
                 Section {
-                    LabeledContent("SSH", value: "\(host.username)@\(host.address):\(host.port)")
-                    LabeledContent("Authentication", value: authDescription(host))
-                    LabeledContent("Privilege", value: host.useSudo ? (model.hasHostPassword(hostID) ? "sudo (password if required)" : "sudo -n") : "direct")
+                    if host.isDeviceAPI {
+                        LabeledContent("Device API", value: "https://\(host.address)\(host.port == 443 ? "" : ":\(host.port)")")
+                        LabeledContent("API token", value: model.hasHostPassword(hostID) ? "Saved in Keychain" : "Not set")
+                        LabeledContent("Pinned certificate", value: host.apiPinnedSHA256.isEmpty
+                                       ? "None (only certificates this Mac trusts)"
+                                       : DeviceAPI.formatFingerprint(host.apiPinnedSHA256))
+                    } else {
+                        LabeledContent("SSH", value: "\(host.username)@\(host.address):\(host.port)")
+                        LabeledContent("Authentication", value: authDescription(host))
+                        LabeledContent("Privilege", value: host.useSudo ? (model.hasHostPassword(hostID) ? "sudo (password if required)" : "sudo -n") : "direct")
+                    }
                     if !host.notes.isEmpty { LabeledContent("System", value: host.notes) }
                     if let seen = host.lastSeen { LabeledContent("Last contact", value: seen.relative) }
                     if let connectionResult {
@@ -25,7 +33,9 @@ struct HostDetailView: View {
 
                 Section {
                     if host.lastDiscovery.isEmpty {
-                        Text("Run discovery to find nginx, Apache, Proxmox, TrueNAS, UniFi OS and OPNsense certificates on this host.")
+                        Text(host.isDeviceAPI
+                             ? "Run discovery to read the certificate the device's web interface is serving."
+                             : "Run discovery to find nginx, Apache, Proxmox, TrueNAS, UniFi OS and OPNsense certificates on this host.")
                             .foregroundStyle(.secondary)
                     }
                     ForEach(host.lastDiscovery) { ep in
@@ -38,7 +48,7 @@ struct HostDetailView: View {
                         if model.busy.contains(hostID) { ProgressView().controlSize(.small) }
                         Button("Discover", systemImage: "magnifyingglass") { Task { await model.discover(hostID) } }
                             .disabled(model.busy.contains(hostID))
-                            .help("Scan this host over SSH for certificates in use by its services")
+                            .help(host.isDeviceAPI ? "Ask the device which certificate it serves" : "Scan this host over SSH for certificates in use by its services")
                     }
                 }
 
@@ -52,7 +62,7 @@ struct HostDetailView: View {
                         Spacer()
                         Button("Add Deployment", systemImage: "plus") {
                             if let c = model.inventory.certificates.first {
-                                editingDeployment = Deployment(certificateID: c.id, hostID: hostID, kind: .nginx)
+                                editingDeployment = Deployment(certificateID: c.id, hostID: hostID, kind: host.isDeviceAPI ? .deviceAPI : .nginx)
                             }
                         }
                         .disabled(model.inventory.certificates.isEmpty)
@@ -72,7 +82,7 @@ struct HostDetailView: View {
                         }
                     }
                     .disabled(testing)
-                    .help("Connect over SSH and report the user and system")
+                    .help(host.isDeviceAPI ? "Call the device's API with the saved token" : "Connect over SSH and report the user and system")
                     Button("Edit", systemImage: "pencil") { editing = true }
                         .help("Change this host's address, login and sudo settings")
                 }
@@ -211,45 +221,33 @@ struct HostEditor: View {
     @Environment(AppModel.self) private var model
     @State var host: ManagedHost
     let onSave: (ManagedHost) -> Void
+    /// The SSH password, or a Device API host's API token (both stored as the host's Keychain password).
     @State private var password = ""
     @State private var hasStoredPassword = false
     @State private var removePassword = false
     @State private var error: String?
+    @State private var fetchedFingerprint: String?
+    @State private var fetching = false
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
-                TextField("Name", text: $host.name, prompt: Text("pve1"))
-                TextField("Address", text: $host.address, prompt: Text("pve1.lan or an ~/.ssh/config alias"))
-                TextField("Port", value: $host.port, format: .number.grouping(.never))
-                TextField("Username", text: $host.username)
-                HStack {
-                    TextField("Identity file", text: $host.identityFile, prompt: Text("Optional — default uses ssh-agent"))
-                    Button("Choose…") {
-                        let panel = NSOpenPanel()
-                        panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
-                        panel.showsHiddenFiles = true
-                        if panel.runModal() == .OK, let url = panel.url { host.identityFile = url.path }
-                    }
-                    .help("Pick an SSH private key file")
+                Picker("Connection", selection: $host.connection) {
+                    ForEach(HostConnection.allCases) { Text($0.displayName).tag($0) }
                 }
-                Section("Password") {
-                    HStack {
-                        SecureField("Password", text: $password,
-                                    prompt: Text(hasStoredPassword && !removePassword ? "•••••••• (saved in Keychain)" : "Optional"))
-                        if hasStoredPassword && !removePassword {
-                            Button("Remove") { removePassword = true; password = "" }
-                                .help("Delete this host's saved password from the Keychain when you save")
-                        }
-                    }
-                    Toggle("Allow password login", isOn: $host.passwordLogin)
-                        .disabled(password.isEmpty && (!hasStoredPassword || removePassword))
-                        .help("Log in with the saved password if key authentication fails")
-                    Toggle("Use sudo for install commands", isOn: $host.useSudo)
-                        .help("Run discovery and installs as root through sudo, using the saved password if needed")
-                    Text("Keys are always tried first. The password is used for SSH login when allowed, and for sudo when the account doesn't have passwordless sudo. It's kept in your login Keychain. New host keys are trusted on first use and pinned in ~/.ssh/known_hosts.")
-                        .font(.caption).foregroundStyle(.secondary)
-                    if let error { Text(error).font(.caption).foregroundStyle(.red) }
+                .help("SSH for servers; Device API for devices that install certificates through their own HTTPS API")
+                .onChange(of: host.connection) { _, new in
+                    if new == .deviceAPI && host.port == 22 { host.port = 443 }
+                    if new == .ssh && host.port == 443 { host.port = 22 }
+                }
+                TextField("Name", text: $host.name, prompt: Text(host.isDeviceAPI ? "amoled" : "pve1"))
+                TextField("Address", text: $host.address,
+                          prompt: Text(host.isDeviceAPI ? "amoled.example.com (the name on its certificate)" : "pve1.lan or an ~/.ssh/config alias"))
+                TextField("Port", value: $host.port, format: .number.grouping(.never))
+                if host.isDeviceAPI {
+                    deviceAPISections
+                } else {
+                    sshSections
                 }
             }
             .formStyle(.grouped)
@@ -257,26 +255,111 @@ struct HostEditor: View {
                 Spacer()
                 Button("Cancel", role: .cancel) { dismiss() }.keyboardShortcut(.cancelAction)
                     .help("Close without saving changes")
-                Button("Save") {
-                    if host.name.isEmpty { host.name = host.address }
-                    do {
-                        if !password.isEmpty { try model.setHostPassword(password, for: host.id) }
-                        else if removePassword { try model.setHostPassword(nil, for: host.id) }
-                    } catch {
-                        self.error = error.localizedDescription
-                        return
-                    }
-                    if !model.hasHostPassword(host.id) { host.passwordLogin = false }
-                    onSave(host)
-                    dismiss()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(host.address.isEmpty)
-                .help("Save this host; a password you typed goes to the Keychain")
+                Button("Save") { save() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(host.address.isEmpty)
+                    .help(host.isDeviceAPI ? "Save this device; a token you typed goes to the Keychain"
+                                           : "Save this host; a password you typed goes to the Keychain")
             }
             .padding()
         }
-        .frame(width: 540, height: 540)
+        .frame(width: 560, height: 600)
         .onAppear { hasStoredPassword = model.hasHostPassword(host.id) }
+    }
+
+    private func save() {
+        if host.name.isEmpty { host.name = host.address }
+        do {
+            if !password.isEmpty { try model.setHostPassword(password, for: host.id) }
+            else if removePassword { try model.setHostPassword(nil, for: host.id) }
+        } catch {
+            self.error = error.localizedDescription
+            return
+        }
+        if !model.hasHostPassword(host.id) { host.passwordLogin = false }
+        if host.isDeviceAPI {
+            host.passwordLogin = false
+            host.useSudo = false
+            host.apiPinnedSHA256 = DeviceAPI.normalizeFingerprint(host.apiPinnedSHA256)
+        }
+        onSave(host)
+        dismiss()
+    }
+
+    private var secretPrompt: String {
+        hasStoredPassword && !removePassword ? "•••••••• (saved in Keychain)" : (host.isDeviceAPI ? "ckd_… from the device's web settings" : "Optional")
+    }
+
+    @ViewBuilder private var secretField: some View {
+        HStack {
+            SecureField(host.isDeviceAPI ? "Token" : "Password", text: $password, prompt: Text(secretPrompt))
+            if hasStoredPassword && !removePassword {
+                Button("Remove") { removePassword = true; password = "" }
+                    .help("Delete the saved secret from the Keychain when you save")
+            }
+        }
+    }
+
+    @ViewBuilder private var sshSections: some View {
+        TextField("Username", text: $host.username)
+        HStack {
+            TextField("Identity file", text: $host.identityFile, prompt: Text("Optional — default uses ssh-agent"))
+            Button("Choose…") {
+                let panel = NSOpenPanel()
+                panel.directoryURL = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".ssh")
+                panel.showsHiddenFiles = true
+                if panel.runModal() == .OK, let url = panel.url { host.identityFile = url.path }
+            }
+            .help("Pick an SSH private key file")
+        }
+        Section("Password") {
+            secretField
+            Toggle("Allow password login", isOn: $host.passwordLogin)
+                .disabled(password.isEmpty && (!hasStoredPassword || removePassword))
+                .help("Log in with the saved password if key authentication fails")
+            Toggle("Use sudo for install commands", isOn: $host.useSudo)
+                .help("Run discovery and installs as root through sudo, using the saved password if needed")
+            Text("Keys are always tried first. The password is used for SSH login when allowed, and for sudo when the account doesn't have passwordless sudo. It's kept in your login Keychain. New host keys are trusted on first use and pinned in ~/.ssh/known_hosts.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
+    }
+
+    @ViewBuilder private var deviceAPISections: some View {
+        Section("API token") {
+            secretField
+            Text("Create the token in the device's web settings under Security › API token. It can only read and replace the HTTPS certificate, and it's kept in your login Keychain.")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+        Section("Certificate pinning") {
+            HStack {
+                TextField("SHA-256", text: $host.apiPinnedSHA256, prompt: Text("Fingerprint of the device's self-signed certificate"))
+                    .font(.body.monospaced())
+                Button(fetching ? "Fetching…" : "Fetch") {
+                    fetching = true
+                    error = nil
+                    Task {
+                        do { fetchedFingerprint = try await model.fetchFingerprint(address: host.address, port: host.port) }
+                        catch { self.error = error.localizedDescription }
+                        fetching = false
+                    }
+                }
+                .disabled(host.address.isEmpty || fetching)
+                .help("Read the fingerprint of the certificate the device presents now")
+            }
+            if let fetchedFingerprint {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("The device presents:").font(.caption)
+                    Text(DeviceAPI.formatFingerprint(fetchedFingerprint)).font(.caption.monospaced()).textSelection(.enabled)
+                    Text("Only pin it if it matches the SHA-256 shown in the device's web settings (Security › HTTPS certificate).")
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button("Pin This Fingerprint") { host.apiPinnedSHA256 = fetchedFingerprint }
+                        .help("Trust this self-signed certificate for this device")
+                }
+            }
+            Text("Until a trusted certificate is installed the device serves a self-signed one. CertKeeper only sends the token and private keys to a certificate this Mac trusts or to the pinned one.")
+                .font(.caption).foregroundStyle(.secondary)
+            if let error { Text(error).font(.caption).foregroundStyle(.red) }
+        }
     }
 }

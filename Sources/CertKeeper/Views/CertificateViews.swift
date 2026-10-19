@@ -392,6 +392,7 @@ struct DeploymentEditor: View {
         case .opnsense: "Imports into System › Trust (reusing the previous CertKeeper entry), assigns it to the web GUI and restarts it."
         case .pihole: "Writes the key and certificate chain into Pi-hole's TLS file, optionally sets webserver.domain, then restarts pihole-FTL (or the container)."
         case .containerApp: "Writes the certificate files (or a .pfx) the app reads, then restarts it: a systemd unit, TrueNAS app, Docker container or Compose project."
+        case .deviceAPI: "Uploads the certificate chain and key to the device's HTTPS API with its API token; the device checks they match and switches its web server to them."
         case .custom: "Runs your script."
         }
     }

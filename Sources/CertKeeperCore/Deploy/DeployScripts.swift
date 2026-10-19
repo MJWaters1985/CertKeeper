@@ -27,6 +27,7 @@ public enum DeployScripts {
         case .opnsense: opnsense
         case .pihole: pihole
         case .containerApp: containerApp
+        case .deviceAPI: ""  // installed through DeviceAPI, not a script
         case .custom: custom
         }
     }

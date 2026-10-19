@@ -43,6 +43,7 @@ Mac (CertKeeper)                                      Hosts
 | App (cert files) | For apps that read their own certificate files (qBittorrent, Jellyfin, Compose stacks…). Writes the files (optionally `chown`ed, e.g. `568:568`), then redeploys the TrueNAS app or restarts the container / Compose project, or runs your reload command |
 | UniFi OS | Replaces `unifi-core.crt/.key` (auto-detected) → restarts `unifi-core` |
 | OPNsense | PHP: imports into System › Trust (reusing the previous CertKeeper entry) → sets the web GUI cert → `configctl webgui restart` |
+| Device (HTTPS API) | For devices without SSH (hosts with connection *Device API*). `PUT /api/tls/certificate` with the full chain and key, authenticated by the device's API token; the device checks the pair and switches its HTTPS server over |
 | Custom | Your own script |
 
 Every script can be viewed and overridden per deployment (*Customize install script*). The scripts get
@@ -71,6 +72,23 @@ TrueNAS can't replace an imported certificate in place, so every renewal creates
 (native, or Docker containers running a `pihole` image, mapped to the host volume), the Proxmox pveproxy cert, the TrueNAS UI
 cert, UniFi `unifi-core.crt`, and the OPNsense web GUI cert. *Adopt* turns a discovered certificate into a managed one,
 reusing an existing managed certificate when the names match.
+
+### Device API hosts
+
+Some devices, such as an ESP32-S3 board running firmware with this API, have no shell. They install certificates
+through a small HTTPS API instead:
+
+* `GET /api/tls` returns the certificate being served: `source` (`installed` or `self-signed`), subject, issuer,
+  `not_after`, `sha256` (of the leaf DER), `dns_names` and `chain_length`.
+* `PUT /api/tls/certificate` takes JSON `{"certificate": "<PEM chain, leaf first>", "private_key": "<PEM>"}`.
+* Both need `Authorization: Bearer <token>`. CertKeeper keeps the token in the Keychain as the host's password.
+
+Until a publicly trusted certificate is installed, the device serves a self-signed one. CertKeeper sends the token
+and private keys only to a certificate macOS trusts for the host's name, or to the one whose SHA-256 is pinned on
+the host. The host editor's **Fetch** button reads the fingerprint; pin it only if it matches the one the device
+shows. Requests use Network.framework rather than URLSession, because App Transport Security makes URLSession
+refuse untrusted certificates even when the app has chosen to trust them. Self-signed certificates also have to
+meet Apple's TLS rules (serverAuth EKU, valid for 825 days or less), or macOS rejects them outright.
 
 ## Setup
 

@@ -484,11 +484,21 @@ public final class AppModel {
                 guard let key = Keychain.get(.certificateKey(cert.id)) else {
                     throw DeployError("Private key for \(cert.name) is missing from the Keychain — reissue the certificate")
                 }
-                let script = try DeployScripts.build(deployment: withSecrets(d), certificate: cert, keyPEM: key)
                 log(.info, "Deploying \(label)")
-                let result = try await ssh.runChecked(script, on: host, timeout: 300)
+                let detail: String
+                if d.kind == .deviceAPI || host.isDeviceAPI {
+                    guard d.kind == .deviceAPI, host.isDeviceAPI else {
+                        throw DeployError("Device (HTTPS API) deployments need a host whose connection is Device API, and the other way round")
+                    }
+                    guard let chain = cert.fullchainPEM else { throw DeployError("\(cert.name) hasn't been issued yet") }
+                    let installed = try await deviceAPI(for: host).install(chainPEM: chain, keyPEM: key)
+                    detail = installed.map { "Device reports \($0.subject), expires \($0.notAfter)" } ?? ""
+                } else {
+                    let script = try DeployScripts.build(deployment: withSecrets(d), certificate: cert, keyPEM: key)
+                    detail = try await ssh.runChecked(script, on: host, timeout: 300).stdout
+                }
                 updateDeployment(deploymentID) { $0.lastDeployed = Date(); $0.lastError = nil; $0.forceRedeploy = false }
-                log(.success, "Deployed \(label)", detail: result.stdout.trimmingCharacters(in: .whitespacesAndNewlines))
+                log(.success, "Deployed \(label)", detail: detail.trimmingCharacters(in: .whitespacesAndNewlines))
                 // Give services that restart asynchronously a moment before verifying.
                 try? await Task.sleep(for: .seconds([.truenas, .unifiOS, .opnsense, .containerApp, .pihole].contains(d.kind) ? 8 : 2))
                 await performCheck(deploymentID, logResult: true)  // already marked busy by this deploy
@@ -518,7 +528,16 @@ public final class AppModel {
             var found: CertificateSummary?
             var onDisk: CertificateSummary?
             var fileMissing = false
-            if d.kind.usesFilePaths {
+            if d.kind == .deviceAPI || host.isDeviceAPI {
+                // Ask the device what it serves; the TLS probe below confirms it from the outside.
+                let info = try await deviceAPI(for: host).info()
+                updateHost(host.id) { $0.lastSeen = Date() }
+                if d.verifyEndpoint.isEmpty, let served = try? await TLSProbe.fetchLeaf(endpoint: deviceEndpoint(host)) {
+                    found = served
+                } else if d.verifyEndpoint.isEmpty {
+                    throw DeployError("Couldn't connect to \(deviceEndpoint(host)) (the device reports \(info.subject))")
+                }
+            } else if d.kind.usesFilePaths {
                 let probe = Discovery.probeScript(path: d.certPath, pkcs12: d.isPKCS12, password: secret(.pfxPassword, for: d.id))
                 let r = try await ssh.run(probe, on: host, timeout: 60)
                 if r.status == 255 {
@@ -698,6 +717,16 @@ public final class AppModel {
     public func discover(_ hostID: UUID) async {
         guard let host = host(hostID) else { return }
         await withBusy(hostID) {
+            if host.isDeviceAPI {
+                do {
+                    let endpoint = try await discoverDevice(host)
+                    updateHost(hostID) { $0.lastSeen = Date(); $0.lastDiscovery = [endpoint] }
+                    log(.info, "Discovered the web interface certificate on \(host.name)", detail: endpoint.note)
+                } catch {
+                    log(.error, "Discovery failed on \(host.name)", detail: error.localizedDescription)
+                }
+                return
+            }
             do {
                 let report = try await Discovery.run(on: host, ssh: ssh)
                 updateHost(hostID) {
@@ -715,6 +744,15 @@ public final class AppModel {
 
     public func testConnection(_ hostID: UUID) async -> String {
         guard let host = host(hostID) else { return "Unknown host" }
+        if host.isDeviceAPI {
+            do {
+                let info = try await deviceAPI(for: host).info()
+                updateHost(hostID) { $0.lastSeen = Date() }
+                return "Connected · token accepted · serving \(info.isSelfSigned ? "a self-signed" : "an installed") certificate for \(info.dnsNames.joined(separator: ", ")), expires \(info.notAfter)"
+            } catch {
+                return error.localizedDescription
+            }
+        }
         do {
             let r = try await ssh.runChecked("id -un; uname -sr", on: host, timeout: 30)
             updateHost(hostID) { $0.lastSeen = Date() }
@@ -882,6 +920,34 @@ public final class AppModel {
             }
             return true
         }
+    }
+
+    // MARK: - Device API hosts
+
+    /// For a Device API host the Keychain "password" is its API token.
+    func deviceAPI(for host: ManagedHost) throws -> DeviceAPI {
+        try DeviceAPI(host: host, token: secrets.get(.hostPassword(host.id)) ?? "")
+    }
+
+    func deviceEndpoint(_ host: ManagedHost) -> String { "\(host.address):\(host.port)" }
+
+    /// The device's web interface as a discovered endpoint, so it can be adopted like any other.
+    func discoverDevice(_ host: ManagedHost) async throws -> DiscoveredEndpoint {
+        let info = try await deviceAPI(for: host).info()
+        let summary = try? await TLSProbe.fetchLeaf(endpoint: deviceEndpoint(host))
+        var note = info.isSelfSigned
+            ? "Serving the device's self-signed certificate"
+            : "Serving an installed certificate from \(info.issuer)"
+        if let summary, summary.sha256 != info.sha256 {
+            note += ". What this Mac sees (\(summary.sha256.prefix(16))…) differs from what the device reports (\(info.sha256.prefix(16))…)"
+        }
+        return DiscoveredEndpoint(kind: .deviceAPI, label: "Web interface", certPath: "", keyPath: "", chainPath: "",
+                                  summary: summary, options: [DeploymentOption.verifyPort.rawValue: String(host.port)], note: note)
+    }
+
+    /// The fingerprint of whatever certificate the device presents right now, for pinning.
+    public func fetchFingerprint(address: String, port: Int) async throws -> String {
+        try await TLSProbe.fetchLeaf(endpoint: "\(address):\(port)").sha256
     }
 
     public func setHostPassword(_ password: String?, for hostID: UUID) throws {

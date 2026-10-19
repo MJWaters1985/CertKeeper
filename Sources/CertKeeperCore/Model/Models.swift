@@ -2,6 +2,22 @@ import Foundation
 
 // MARK: - Hosts
 
+/// How CertKeeper reaches a host.
+public enum HostConnection: String, Codable, CaseIterable, Identifiable, Sendable {
+    /// Shell over SSH: discovery and install scripts.
+    case ssh
+    /// A device that installs certificates through its own HTTPS API (see `DeviceAPI`).
+    case deviceAPI = "device_api"
+
+    public var id: String { rawValue }
+    public var displayName: String {
+        switch self {
+        case .ssh: "SSH"
+        case .deviceAPI: "Device API (HTTPS)"
+        }
+    }
+}
+
 public struct ManagedHost: Codable, Identifiable, Hashable, Sendable {
     public var id: UUID = UUID()
     public var name: String
@@ -20,6 +36,12 @@ public struct ManagedHost: Codable, Identifiable, Hashable, Sendable {
     public var notes: String = ""
     public var lastSeen: Date?
     public var lastDiscovery: [DiscoveredEndpoint] = []
+    public var connection: HostConnection = .ssh
+    /// Device API: SHA-256 of the self-signed certificate to trust before a publicly trusted one is
+    /// installed (any format; separators are ignored). Empty = only system-trusted certificates.
+    public var apiPinnedSHA256: String = ""
+
+    public var isDeviceAPI: Bool { connection == .deviceAPI }
 
     public init(name: String, address: String, port: Int = 22, username: String = "root") {
         self.name = name
@@ -42,6 +64,8 @@ public struct ManagedHost: Codable, Identifiable, Hashable, Sendable {
         notes = try c.decodeIfPresent(String.self, forKey: .notes) ?? ""
         lastSeen = try c.decodeIfPresent(Date.self, forKey: .lastSeen)
         lastDiscovery = (try? c.decodeIfPresent([DiscoveredEndpoint].self, forKey: .lastDiscovery)) ?? []
+        connection = (try? c.decodeIfPresent(HostConnection.self, forKey: .connection)) ?? .ssh
+        apiPinnedSHA256 = try c.decodeIfPresent(String.self, forKey: .apiPinnedSHA256) ?? ""
     }
 }
 
@@ -121,6 +145,8 @@ public enum DeploymentKind: String, Codable, CaseIterable, Identifiable, Sendabl
     case pihole
     /// Certificate files read by a container (TrueNAS custom app, Docker Compose, …).
     case containerApp
+    /// A device with CertKeeper's HTTPS install API (host connection `.deviceAPI`).
+    case deviceAPI = "device_api"
     case custom
 
     public var id: String { rawValue }
@@ -135,6 +161,7 @@ public enum DeploymentKind: String, Codable, CaseIterable, Identifiable, Sendabl
         case .opnsense: "OPNsense"
         case .pihole: "Pi-hole"
         case .containerApp: "App (cert files)"
+        case .deviceAPI: "Device (HTTPS API)"
         case .custom: "Custom script"
         }
     }
