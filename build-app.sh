@@ -29,6 +29,11 @@ APP=build/CertKeeper.app
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/CertKeeper"
+# SwiftPM records the deployment target (15.0) as the SDK version, and AppKit uses that to pick
+# legacy behaviour: macOS 26+ then draws the pre-Liquid Glass window chrome, including a stray
+# line across the sidebar's title bar. Record the SDK we actually built against.
+xcrun vtool -set-build-version macos 15.0 "$(xcrun --show-sdk-version)" -replace \
+  -output "$APP/Contents/MacOS/CertKeeper" "$APP/Contents/MacOS/CertKeeper"
 cp Support/Info.plist "$APP/Contents/Info.plist"
 # App icon: the layered Icon Composer icon compiles to Assets.car (macOS 26+ renders it with Liquid
 # Glass) plus a flattened CertKeeper.icns for older systems.
