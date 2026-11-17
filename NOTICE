@@ -1,0 +1,7 @@
+CertKeeper
+Copyright 2026 Mike Waters
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+It depends on swift-crypto, swift-certificates and swift-asn1 from the Swift
+Server Workgroup / Apple Inc., each licensed under the Apache License, Version 2.0.

@@ -171,3 +171,7 @@ CK_ACME_STAGING=1 swift test --filter ACMEStaging    # live check against Let's 
   against a simulated middleware rather than a real system. App updates send back the app's full config with only the
   `certificate_id` fields changed.
 * The app has to be running for scheduled rotation. It stays in the menu bar, and *Open at login* is in Settings › Schedule.
+
+## License
+
+Copyright 2026 Mike Waters. Licensed under the [Apache License, Version 2.0](LICENSE); see [NOTICE](NOTICE).
