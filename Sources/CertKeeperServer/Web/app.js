@@ -884,7 +884,7 @@ function renderAuth() {
 
 // ---------- Start ----------
 
-window.addEventListener('hashchange', () => { if (S.state) renderApp(true); });
+window.addEventListener('hashchange', () => { if (S.state) { renderApp(true); refresh(); } });
 (async () => {
   try {
     S.session = await api('GET', '/api/session');
