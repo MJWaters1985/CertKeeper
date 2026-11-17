@@ -97,3 +97,13 @@ and a macvlan container, which would stop CertKeeper from managing the NAS's own
   link the icon and screenshots from this repository.
 - Expect maintainer edits (defaults, notes). Their metadata tools are x86-only, so apply the
   diff CI prints. After the merge, Renovate picks up new tags; no version-bump PRs.
+
+## Status (2026-11-17)
+
+Done: steps 2–5 and the image half of step 6. The core builds and tests on Linux. The server has
+the HTTPS API, sign-in and the web interface, plus self-managed HTTPS, safe stops and the
+guide in [server.md](server.md). The Dockerfile cross-compiles a static binary and has been
+tested as an amd64 image under emulation.
+
+Next: a private test on the NAS (step 7), then the release workflow (rest of step 6), then the
+catalog entry.

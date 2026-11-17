@@ -4,6 +4,11 @@ A native macOS app (SwiftUI, macOS 15+) that issues Let's Encrypt certificates u
 DNS-01 validation and rotates them onto remote hosts over SSH. It keeps an inventory, so it only
 renews and redeploys when needed.
 
+It comes in two editions that share one engine:
+
+* **The Mac app** (this README).
+* **A server** for Docker or TrueNAS, with a web interface: see [docs/server.md](docs/server.md).
+
 ## How it works
 
 ```

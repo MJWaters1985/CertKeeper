@@ -1,6 +1,10 @@
 #if os(Linux)
 import Foundation
+#if canImport(Glibc)
 import Glibc
+#elseif canImport(Musl)
+import Musl
+#endif
 
 /// Starts child processes on Linux with a clean signal state, in place of Foundation's `Process`.
 ///
@@ -100,8 +104,11 @@ enum CleanSpawn {
         posix_spawn_file_actions_adddup2(&actions, stdio.0, 0)
         posix_spawn_file_actions_adddup2(&actions, stdio.1, 1)
         posix_spawn_file_actions_adddup2(&actions, stdio.2, 2)
+        #if canImport(Glibc)
         // Nothing else open in this process reaches the child, whether or not it was close-on-exec.
+        // (musl has no closefrom; there the close-on-exec pipes made under spawnLock have to do.)
         posix_spawn_file_actions_addclosefrom_np(&actions, 3)
+        #endif
         if let directory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
 
         var attributes = posix_spawnattr_t()
