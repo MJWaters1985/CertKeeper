@@ -1,5 +1,8 @@
+import Crypto
 import Foundation
+#if canImport(Security)
 import Security
+#endif
 
 /// JSON file persistence for the inventory in ~/Library/Application Support/CertKeeper.
 public enum InventoryFile {
@@ -59,7 +62,10 @@ public enum Keychain {
             }
         }
     }
+}
 
+#if canImport(Security)
+extension Keychain {
     public static func set(_ value: String, for item: Item) throws {
         let data = Data(value.utf8)
         let query: [String: Any] = [
@@ -108,6 +114,7 @@ public enum Keychain {
         }
     }
 }
+#endif
 
 /// Where secrets live. The app uses the Keychain; tests use memory so they never touch the login keychain.
 public protocol SecretStore: Sendable {
@@ -116,11 +123,85 @@ public protocol SecretStore: Sendable {
     func delete(_ item: Keychain.Item)
 }
 
+#if canImport(Security)
 public struct KeychainStore: SecretStore {
     public init() {}
     public func get(_ item: Keychain.Item) -> String? { Keychain.get(item) }
     public func set(_ value: String, for item: Keychain.Item) throws { try Keychain.set(value, for: item) }
     public func delete(_ item: Keychain.Item) { Keychain.delete(item) }
+}
+#endif
+
+/// Secrets in one AES-GCM encrypted JSON file, for systems without a Keychain (the Linux server).
+/// The file holds `{account: value}`, sealed with `key`; it's rewritten atomically with mode 0600 on
+/// every change. Anyone holding the key and the file can read every secret.
+public final class EncryptedFileSecretStore: SecretStore, @unchecked Sendable {
+    public let url: URL
+    private let key: SymmetricKey
+    private let lock = NSLock()
+    private var values: [String: String]
+
+    public struct DecryptionFailed: LocalizedError {
+        public var errorDescription: String? {
+            "The secrets file can't be decrypted with this key. Was the secrets key changed?"
+        }
+    }
+
+    /// Loads the file if it exists. Throws when it exists but doesn't open with `key`, rather than
+    /// starting empty and overwriting it on the next save.
+    public init(url: URL, key: SymmetricKey) throws {
+        self.url = url
+        self.key = key
+        if FileManager.default.fileExists(atPath: url.path) {
+            let sealed = try Data(contentsOf: url)
+            guard let box = try? AES.GCM.SealedBox(combined: sealed),
+                  let plain = try? AES.GCM.open(box, using: key) else { throw DecryptionFailed() }
+            values = try JSONDecoder().decode([String: String].self, from: plain)
+        } else {
+            values = [:]
+        }
+    }
+
+    public func get(_ item: Keychain.Item) -> String? { lock.lock(); defer { lock.unlock() }; return values[item.account] }
+
+    public func set(_ value: String, for item: Keychain.Item) throws {
+        lock.lock(); defer { lock.unlock() }
+        var next = values
+        next[item.account] = value
+        try write(next)
+        values = next
+    }
+
+    public func delete(_ item: Keychain.Item) {
+        lock.lock(); defer { lock.unlock() }
+        var next = values
+        guard next.removeValue(forKey: item.account) != nil else { return }
+        if (try? write(next)) != nil { values = next }
+    }
+
+    private func write(_ values: [String: String]) throws {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = .sortedKeys
+        guard let sealed = try AES.GCM.seal(try encoder.encode(values), using: key).combined else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+        // Create the temporary file with 0600 before any secret is written to it, then rename it into place.
+        let temp = url.deletingLastPathComponent().appendingPathComponent(".\(url.lastPathComponent).\(UUID().uuidString)")
+        guard FileManager.default.createFile(atPath: temp.path, contents: nil, attributes: [.posixPermissions: 0o600]) else {
+            throw CocoaError(.fileWriteNoPermission)
+        }
+        do {
+            let handle = try FileHandle(forWritingTo: temp)
+            try handle.write(contentsOf: sealed)
+            try handle.synchronize()
+            try handle.close()
+            guard rename(temp.path, url.path) == 0 else { throw CocoaError(.fileWriteUnknown) }
+        } catch {
+            try? FileManager.default.removeItem(at: temp)
+            throw error
+        }
+    }
 }
 
 public final class MemorySecretStore: SecretStore, @unchecked Sendable {

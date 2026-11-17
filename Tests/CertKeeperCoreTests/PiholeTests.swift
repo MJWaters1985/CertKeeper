@@ -160,7 +160,7 @@ struct FakePihole {
     }
 
     @MainActor @Test func adoptSetsVerifyEndpointFromPort() throws {
-        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
         let host = ManagedHost(name: "pi-hole", address: "pi-hole.example.com"); m.addHost(host)
         let (pem, _) = try selfSigned(["pi.hole"])
         var ep = DiscoveredEndpoint(kind: .pihole, label: "Web UI (pi.hole)", certPath: "/etc/pihole/tls.pem",

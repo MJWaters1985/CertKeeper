@@ -1,7 +1,12 @@
-import CryptoKit
+import Crypto
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+#if canImport(Network)
 import Network
 import Security
+#endif
 
 /// Client for devices that take certificates over HTTPS instead of SSH, such as the ESP32-S3 AMOLED
 /// board: `GET /api/tls` describes the certificate being served and `PUT /api/tls/certificate`
@@ -111,7 +116,7 @@ public struct DeviceAPI: Sendable {
     static func untrustedMessage(host: String, fingerprint: String, pinned: String) -> String {
         let shown = formatFingerprint(fingerprint)
         if pinned.isEmpty {
-            return "\(host) presented a certificate this Mac doesn't trust (SHA-256 \(shown)). If it matches the fingerprint in the device's web settings (Security › HTTPS certificate), pin it on the host."
+            return "\(host) presented a certificate CertKeeper doesn't trust (SHA-256 \(shown)). If it matches the fingerprint in the device's web settings (Security › HTTPS certificate), pin it on the host."
         }
         return "\(host) presented a certificate that is neither trusted nor the pinned one (SHA-256 \(shown)). If the device made a new self-signed certificate, check its fingerprint in the web settings and pin the new one."
     }
@@ -151,20 +156,27 @@ final class TrustGate: @unchecked Sendable {
         return rejected
     }
 
-    func evaluate(_ trust: SecTrust) -> Bool {
-        let trusted = SecTrustEvaluateWithError(trust, nil)
-        let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first
-        let sha = leaf.map { Data(SHA256.hash(data: SecCertificateCopyData($0) as Data)).hex } ?? ""
-        if DeviceAPI.accepts(systemTrusted: trusted, leafSHA256: sha, pinned: pinned) { return true }
+    /// `systemTrusted`: the platform verifier accepted the chain for the host's name.
+    func decide(systemTrusted: Bool, leafDER: Data?) -> Bool {
+        let sha = leafDER.map { Data(SHA256.hash(data: $0)).hex } ?? ""
+        if DeviceAPI.accepts(systemTrusted: systemTrusted, leafSHA256: sha, pinned: pinned) { return true }
         lock.lock()
         rejected = sha
         lock.unlock()
         return false
     }
+
+    #if canImport(Security)
+    func evaluate(_ trust: SecTrust) -> Bool {
+        let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first
+        return decide(systemTrusted: SecTrustEvaluateWithError(trust, nil), leafDER: leaf.map { SecCertificateCopyData($0) as Data })
+    }
+    #endif
 }
 
 /// One HTTP/1.1 request over a TLS connection (`Connection: close`), returning the raw response.
 enum HTTPOverTLS {
+    #if canImport(Network)
     static func exchange(host: String, port: UInt16, request: Data, gate: TrustGate, timeout: TimeInterval) async throws -> Data {
         let tls = NWProtocolTLS.Options()
         sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, host)
@@ -211,6 +223,8 @@ enum HTTPOverTLS {
             }
         }
     }
+
+    #endif
 
     /// Whether `raw` holds a complete response: headers plus Content-Length bytes, or a chunked body
     /// through its last chunk. A response with neither can only end when the server closes.

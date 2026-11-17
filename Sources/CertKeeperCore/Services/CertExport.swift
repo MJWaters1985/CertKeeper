@@ -95,7 +95,9 @@ public enum CertExport {
             guard let password, !password.isEmpty else { throw ExportError(message: "PKCS#12 needs a password") }
             var args = ["pkcs12", "-export", "-inkey", "key.pem", "-in", "fullchain.pem",
                         "-name", cert.domains.first ?? cert.name, "-passout", "env:CK_P12_PASSWORD", "-out", "out.p12"]
-            if !legacy { args += ["-keypbe", "AES-256-CBC", "-certpbe", "AES-256-CBC", "-macalg", "sha256"] }
+            // Both named explicitly: the defaults are 3DES in LibreSSL (macOS) but AES in OpenSSL 3 (Linux).
+            args += legacy ? ["-keypbe", "PBE-SHA1-3DES", "-certpbe", "PBE-SHA1-3DES", "-macalg", "sha1"]
+                           : ["-keypbe", "AES-256-CBC", "-certpbe", "AES-256-CBC", "-macalg", "sha256"]
             let p12 = try runOpenSSL(openssl, args, inputs: ["key.pem": text(key), "fullchain.pem": text(fullchain)],
                                      output: "out.p12", environment: ["CK_P12_PASSWORD": password])
             return [OutputFile(name: "\(base).p12", data: p12, secret: true)]
@@ -134,18 +136,26 @@ public enum CertExport {
             try data.write(to: url)
             try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
         }
+        let env = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        #if os(Linux)
+        let result = try CleanSpawn.run(path, args, environment: env, directory: dir.path, timeout: 60)
+        let status = result.status
+        let message = String(decoding: result.stderr, as: UTF8.self)
+        #else
         let process = Process()
         process.executableURL = URL(fileURLWithPath: path)
         process.arguments = args
         process.currentDirectoryURL = dir
-        process.environment = ProcessInfo.processInfo.environment.merging(environment) { $1 }
+        process.environment = env
         let err = Pipe()
         process.standardError = err
         process.standardOutput = Pipe()
         try process.run()
         process.waitUntilExit()
+        let status = process.terminationStatus
         let message = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        guard process.terminationStatus == 0, let data = try? Data(contentsOf: dir.appendingPathComponent(output)) else {
+        #endif
+        guard status == 0, let data = try? Data(contentsOf: dir.appendingPathComponent(output)) else {
             throw ExportError(message: "openssl \(args.first ?? "") failed: \(message.trimmingCharacters(in: .whitespacesAndNewlines))")
         }
         return data

@@ -1,5 +1,8 @@
 import Crypto
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Minimal RFC 8555 ACME client supporting the dns-01 challenge.
 public actor ACMEClient {

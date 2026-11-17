@@ -1,4 +1,7 @@
 import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
 
 /// Cloudflare DNS API client, scoped to what DNS-01 needs.
 /// The token needs `Zone:Read` and `DNS:Edit` for the relevant zones.

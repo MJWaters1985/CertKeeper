@@ -18,22 +18,11 @@ import Testing
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("ck-exp-\(UUID().uuidString)")
         try input.write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        p.arguments = args + ["-in", url.path]
-        p.environment = ProcessInfo.processInfo.environment.merging(env) { $1 }
-        // Separate pipes: sharing one let stderr ("MAC verified OK") land inside a PEM block under load.
-        let out = Pipe(), err = Pipe()
-        p.standardOutput = out
-        p.standardError = err
-        try p.run()
-        var errData = Data()
-        let reader = Thread { errData = err.fileHandleForReading.readDataToEndOfFile() }
-        reader.start()
-        let data = out.fileHandleForReading.readDataToEndOfFile()
-        p.waitUntilExit()
-        while reader.isExecuting { Thread.sleep(forTimeInterval: 0.01) }
-        return (String(decoding: data, as: UTF8.self) + "\n" + String(decoding: errData, as: UTF8.self), p.terminationStatus)
+        // stdout and stderr are kept apart: sharing one let stderr ("MAC verified OK") land inside a
+        // PEM block under load.
+        let r = try runTool("/usr/bin/openssl", args + ["-in", url.path],
+                            environment: ProcessInfo.processInfo.environment.merging(env) { $1 })
+        return (String(decoding: r.stdout, as: UTF8.self) + "\n" + String(decoding: r.stderr, as: UTF8.self), r.status)
     }
 
     func certCount(_ s: String) -> Int { s.components(separatedBy: "BEGIN CERTIFICATE").count - 1 }

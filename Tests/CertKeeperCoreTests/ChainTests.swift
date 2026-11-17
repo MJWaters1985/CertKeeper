@@ -62,13 +62,14 @@ import Testing
         inv.deployments = [d]
         try InventoryFile.save(inv, to: url)
 
-        let m = AppModel(fileURL: url)
+        let store = MemorySecretStore()
+        let m = AppModel(fileURL: url, secrets: store)
         #expect(try opensslCount(m.inventory.certificates[0].chainPEM!) == 3)
         #expect(m.inventory.deployments[0].forceRedeploy)
         #expect(m.needsDeployment(m.inventory.deployments[0]))
         #expect(m.inventory.log.first?.message.contains("Repaired") == true)
 
-        let again = AppModel(fileURL: url)
+        let again = AppModel(fileURL: url, secrets: store)
         #expect(again.inventory.deployments[0].forceRedeploy, "flag persists until a deploy succeeds")
         #expect(again.inventory.log.filter { $0.message.contains("Repaired") }.count == 1, "repair runs once")
     }

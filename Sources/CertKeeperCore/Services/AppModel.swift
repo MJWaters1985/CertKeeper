@@ -14,16 +14,32 @@ public final class AppModel {
     public private(set) var lastMaintenance: Date?
     public var loadError: String?
 
-    @ObservationIgnored private let ssh = SSHRunner(askpassPath: Bundle.main.executablePath)
+    @ObservationIgnored private let ssh: SSHRunner
     @ObservationIgnored private let fileURL: URL
     @ObservationIgnored private var schedulerTask: Task<Void, Never>?
     @ObservationIgnored public let secrets: SecretStore
     /// Secret options found by discovery this session, by endpoint ID — never written to the inventory.
     @ObservationIgnored private var discoveredSecrets: [String: [String: String]] = [:]
 
-    public init(fileURL: URL = InventoryFile.url, secrets: SecretStore = KeychainStore()) {
+    #if canImport(Security)
+    /// The Mac app: secrets in the login Keychain, which the askpass helper reads itself.
+    public convenience init(fileURL: URL = InventoryFile.url) {
+        self.init(fileURL: fileURL, secrets: KeychainStore())
+    }
+    #endif
+
+    /// - Parameters:
+    ///   - askpassPath: The executable ssh runs to answer password prompts (see `AskPass`).
+    ///   - passwordInEnvironment: Hand host passwords to the askpass helper in its environment, for
+    ///     systems where it can't read `secrets` itself (the Linux server's encrypted file).
+    public init(fileURL: URL = InventoryFile.url, secrets: SecretStore,
+                askpassPath: String? = Bundle.main.executablePath, passwordInEnvironment: Bool = false) {
         self.fileURL = fileURL
         self.secrets = secrets
+        var ssh = SSHRunner(askpassPath: askpassPath)
+        ssh.passwordLookup = { [secrets] in secrets.get(.hostPassword($0)) }
+        ssh.passwordInEnvironment = passwordInEnvironment
+        self.ssh = ssh
         do {
             inventory = try InventoryFile.load(from: fileURL)
             repairChains()
@@ -229,7 +245,7 @@ public final class AppModel {
     public func addHost(_ host: ManagedHost) { inventory.hosts.append(host) }
 
     public func deleteHost(_ id: UUID) {
-        Keychain.delete(.hostPassword(id))
+        secrets.delete(.hostPassword(id))
         removeDeployments { $0.hostID == id }
         inventory.hosts.removeAll { $0.id == id }
     }
@@ -239,7 +255,7 @@ public final class AppModel {
     public func deleteCertificate(_ id: UUID) {
         removeDeployments { $0.certificateID == id }
         inventory.certificates.removeAll { $0.id == id }
-        Keychain.delete(.certificateKey(id))
+        secrets.delete(.certificateKey(id))
     }
 
     public func addDeployment(_ d: Deployment) { inventory.deployments.append(d) }
@@ -390,16 +406,16 @@ public final class AppModel {
         guard settings.acceptedTermsOfService else {
             throw DeployError("Accept the Let's Encrypt Subscriber Agreement in Settings first")
         }
-        guard let cfToken = Keychain.get(.cloudflareToken), !cfToken.isEmpty else {
+        guard let cfToken = secrets.get(.cloudflareToken), !cfToken.isEmpty else {
             throw DeployError("No Cloudflare API token configured (Settings › Cloudflare)")
         }
         let domains = cert.domains.map { $0.trimmingCharacters(in: .whitespaces).lowercased() }.filter { !$0.isEmpty }
         guard !domains.isEmpty else { throw DeployError("Certificate has no domains") }
 
         let accountKey: String
-        if let k = Keychain.get(.acmeAccountKey) { accountKey = k } else {
+        if let k = secrets.get(.acmeAccountKey) { accountKey = k } else {
             accountKey = ACMEClient.newAccountKeyPEM()
-            try Keychain.set(accountKey, for: .acmeAccountKey)
+            try secrets.set(accountKey, for: .acmeAccountKey)
         }
         let dirKey = settings.directoryURL.absoluteString
         let acme = try ACMEClient(
@@ -461,7 +477,7 @@ public final class AppModel {
         guard CertCrypto.keyMatches(certPEM: leaf, keyPEM: keyPEM) else {
             throw DeployError("Issued certificate does not match the generated key")
         }
-        try Keychain.set(keyPEM, for: .certificateKey(cert.id))
+        try secrets.set(keyPEM, for: .certificateKey(cert.id))
         return Issued(leaf: leaf, chain: chain, summary: try CertCrypto.summarize(pem: leaf))
     }
 
@@ -481,7 +497,7 @@ public final class AppModel {
         await withBusy(deploymentID) {
             let label = "\(cert.name) → \(host.name) (\(d.kind.displayName))"
             do {
-                guard let key = Keychain.get(.certificateKey(cert.id)) else {
+                guard let key = secrets.get(.certificateKey(cert.id)) else {
                     throw DeployError("Private key for \(cert.name) is missing from the Keychain — reissue the certificate")
                 }
                 log(.info, "Deploying \(label)")
@@ -659,7 +675,7 @@ public final class AppModel {
             }
             guard let served, let first = served.chain.first else {
                 return fail("Couldn't reach \(d.verifyEndpoint): \(failure?.localizedDescription ?? "no certificate presented")"
-                    + ". If this service isn't reachable from this Mac, clear the deployment's TLS endpoint to read the certificate on the host instead.")
+                    + ". If this service isn't reachable from CertKeeper, clear the deployment's TLS endpoint to read the certificate on the host instead.")
             }
             leaf = first
             if served.exact { chainComplete = TLSProbe.chainIsComplete(served.chain) }
@@ -939,7 +955,7 @@ public final class AppModel {
             ? "Serving the device's self-signed certificate"
             : "Serving an installed certificate from \(info.issuer)"
         if let summary, summary.sha256 != info.sha256 {
-            note += ". What this Mac sees (\(summary.sha256.prefix(16))…) differs from what the device reports (\(info.sha256.prefix(16))…)"
+            note += ". What CertKeeper sees (\(summary.sha256.prefix(16))…) differs from what the device reports (\(info.sha256.prefix(16))…)"
         }
         return DiscoveredEndpoint(kind: .deviceAPI, label: "Web interface", certPath: "", keyPath: "", chainPath: "",
                                   summary: summary, options: [DeploymentOption.verifyPort.rawValue: String(host.port)], note: note)
@@ -951,12 +967,12 @@ public final class AppModel {
     }
 
     public func setHostPassword(_ password: String?, for hostID: UUID) throws {
-        if let password, !password.isEmpty { try Keychain.set(password, for: .hostPassword(hostID)) }
-        else { Keychain.delete(.hostPassword(hostID)) }
+        if let password, !password.isEmpty { try secrets.set(password, for: .hostPassword(hostID)) }
+        else { secrets.delete(.hostPassword(hostID)) }
         SudoCache.shared.reset()
     }
 
-    public func hasHostPassword(_ hostID: UUID) -> Bool { Keychain.get(.hostPassword(hostID)) != nil }
+    public func hasHostPassword(_ hostID: UUID) -> Bool { secrets.get(.hostPassword(hostID)) != nil }
 
     // MARK: - Rotation pass
 

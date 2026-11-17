@@ -65,12 +65,8 @@ struct FakeKVM {
 }
 
 /// A real child process standing in for the nginx master, so we can see the HUP arrive.
-func spawnSleeper() throws -> Process {
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/bin/sleep")
-    p.arguments = ["60"]
-    try p.run()
-    return p
+func spawnSleeper() throws -> TestProcess {
+    try TestProcess("/bin/sleep", ["60"])
 }
 
 @Suite struct NginxInstanceTests {
@@ -129,7 +125,7 @@ func spawnSleeper() throws -> Process {
         #expect(out.contains("master pid \(master.processIdentifier)"))
         #expect(kvm.log.contains("nginx -p \(kvm.prefix) -c \(kvm.conf) -t"))
         master.waitUntilExit()
-        #expect(master.terminationReason == .uncaughtSignal && master.terminationStatus == SIGHUP)
+        #expect(master.exitSignal == SIGHUP)
         #expect(other.isRunning)
 
         // written through the certbot symlinks

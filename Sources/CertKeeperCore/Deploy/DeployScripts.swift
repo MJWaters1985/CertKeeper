@@ -181,9 +181,10 @@ public enum DeployScripts {
     fi
     if ck_have systemctl && systemctl is-active --quiet nginx; then
       systemctl reload nginx
-    elif ck_have service; then
-      service nginx reload
+    elif ck_have service && service nginx reload 2>/dev/null; then
+      :
     else
+      # no service manager, or one that doesn't manage this nginx
       nginx -s reload
     fi
     echo "nginx reloaded"

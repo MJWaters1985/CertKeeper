@@ -4,7 +4,7 @@ import Testing
 
 @Suite @MainActor struct AdoptionTests {
     func model() -> AppModel {
-        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
     }
 
     func endpoint(_ names: [String], kind: DeploymentKind = .containerApp, path: String = "/mnt/app/cert.pem") throws -> DiscoveredEndpoint {

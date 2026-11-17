@@ -77,8 +77,13 @@ struct FakeUOS {
         let out = try runShell(script, path: uos.bin.path, env: uos.env)
         #expect(out.contains("restarted unifi-core inside the uosserver container"))
         let owner = try FileManager.default.attributesOfItem(atPath: uos.root.appendingPathComponent("home/uosserver").path)[.ownerAccountName] as? String
-        #expect(uos.log.contains("runuser -u \(owner ?? "?") -- env XDG_RUNTIME_DIR=/run/user/1001 podman exec uosserver systemctl restart unifi-core"),
-                "runs podman as the volume's owner with its runtime dir")
+        if owner == "root" {
+            #expect(uos.log.contains("podman exec uosserver systemctl restart unifi-core") && !uos.log.contains("runuser"),
+                    "root's own volume: podman runs directly")
+        } else {
+            #expect(uos.log.contains("runuser -u \(owner ?? "?") -- env XDG_RUNTIME_DIR=/run/user/1001 podman exec uosserver systemctl restart unifi-core"),
+                    "runs podman as the volume's owner with its runtime dir")
+        }
         #expect(!uos.log.contains("systemctl restart uosserver"))
         let crt = try String(contentsOf: uos.dir.appendingPathComponent("unifi-core.crt"), encoding: .utf8)
         #expect(crt.contains(c.leafPEM!.trimmingCharacters(in: .whitespacesAndNewlines)))
@@ -123,10 +128,12 @@ struct FakeUOS {
 
 @Suite struct StdinShieldTests {
     /// What hid UniFi OS Server: a command that reads stdin swallows the rest of a script piped to `sh -s`.
+    /// The filler pushes `echo after` past what dash reads ahead in one go (bash reads byte by byte),
+    /// so the bug shows with either shell.
     let script = """
     echo before
     cat > /dev/null
-    echo after
+    \(String(repeating: "# filler to get past the shell's read-ahead\n", count: 1_000))echo after
     """
 
     @Test func unshieldedScriptLosesEverythingAfterAStdinReader() async throws {

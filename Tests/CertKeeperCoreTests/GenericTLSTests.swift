@@ -9,9 +9,9 @@ import Testing
         let root: URL
         var bin: URL { root.appendingPathComponent("bin") }
         var tls: URL { root.appendingPathComponent("etc/family-hub/tls") }
-        let server: Process
+        let server: TestProcess
         let port: Int
-        func cleanup() { server.terminate(); server.waitUntilExit(); try? FileManager.default.removeItem(at: root) }
+        func cleanup() { server.stop(); try? FileManager.default.removeItem(at: root) }
     }
 
     /// Starts a TLS server on a free local port serving `served` (PEM, full chain) with `key`.
@@ -34,13 +34,7 @@ import Testing
         var lastError: Error?
         for _ in 0..<5 {
             let port = Int.random(in: 30_000...60_000)
-            let server = Process()
-            server.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-            server.arguments = ["s_server", "-accept", String(port), "-cert", sc.path, "-key", sk.path, "-www", "-quiet"]
-            server.standardOutput = FileHandle.nullDevice
-            server.standardError = FileHandle.nullDevice
-            server.standardInput = Pipe()
-            try server.run()
+            let server = try TestProcess("/usr/bin/openssl", ["s_server", "-accept", String(port), "-cert", sc.path, "-key", sk.path, "-www", "-quiet"])
             // wait until it accepts TLS
             for _ in 0..<50 {
                 if (try? runShell("echo | openssl s_client -connect 127.0.0.1:\(port) 2>/dev/null | grep -q BEGIN", path: "/usr/bin")) != nil {
@@ -56,7 +50,7 @@ import Testing
                 }
                 Thread.sleep(forTimeInterval: 0.1)
             }
-            server.terminate()
+            server.stop()
             lastError = DeployError("s_server didn't start on \(port)")
         }
         throw lastError ?? DeployError("no port")
@@ -141,3 +135,4 @@ import Testing
         #expect(labels == ["kvm", "TLS service on :8443 (python3)"], "same certificate behind a symlinked path is a duplicate")
     }
 }
+

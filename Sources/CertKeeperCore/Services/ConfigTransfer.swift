@@ -1,5 +1,5 @@
-import CommonCrypto
 import Crypto
+import _CryptoExtras
 import Foundation
 
 /// Export and import of CertKeeper's configuration.
@@ -113,14 +113,13 @@ public enum ConfigTransfer {
     }
 
     static func deriveKey(password: String, salt: Data, iterations: UInt32) throws -> SymmetricKey {
-        var derived = [UInt8](repeating: 0, count: 32)
-        let pw = Array(password.utf8)
-        let status = salt.withUnsafeBytes { saltBytes in
-            CCKeyDerivationPBKDF(CCPBKDFAlgorithm(kCCPBKDF2), pw.map { Int8(bitPattern: $0) }, pw.count,
-                                 saltBytes.bindMemory(to: UInt8.self).baseAddress, salt.count,
-                                 CCPseudoRandomAlgorithm(kCCPRFHmacAlgSHA256), iterations, &derived, derived.count)
+        // swift-crypto's PBKDF2 (CommonCrypto on Apple platforms, BoringSSL elsewhere). The round count is
+        // read from the file being imported; exports always use `iterations`.
+        do {
+            return try KDF.Insecure.PBKDF2.deriveKey(from: Array(password.utf8), salt: salt, using: .sha256,
+                                                     outputByteCount: 32, unsafeUncheckedRounds: Int(iterations))
+        } catch {
+            throw TransferError.keyDerivationFailed
         }
-        guard status == kCCSuccess else { throw TransferError.keyDerivationFailed }
-        return SymmetricKey(data: derived)
     }
 }

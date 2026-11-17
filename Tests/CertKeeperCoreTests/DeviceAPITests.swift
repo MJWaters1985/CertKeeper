@@ -4,7 +4,7 @@ import Testing
 
 @Suite @MainActor struct DeviceAPITests {
     func model() -> AppModel {
-        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
     }
 
     @Test func fingerprintFormats() {

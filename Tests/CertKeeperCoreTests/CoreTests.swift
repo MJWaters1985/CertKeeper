@@ -183,17 +183,8 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
     func templatesAreValidShell(_ kind: DeploymentKind) throws {
         let (c, key) = try issuedCert()
         let script = try DeployScripts.build(deployment: Deployment(certificateID: c.id, hostID: UUID(), kind: kind), certificate: c, keyPEM: key)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-n"]
-        let pipe = Pipe()
-        p.standardInput = pipe
-        p.standardError = Pipe()
-        try p.run()
-        SSHRunner.ignoreSIGPIPE(); try? pipe.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
-        try pipe.fileHandleForWriting.close()
-        p.waitUntilExit()
-        #expect(p.terminationStatus == 0, "sh -n failed for \(kind)")
+        let r = try runTool("/bin/sh", ["-n"], stdin: Data(SSHRunner.shielded(script).utf8))
+        #expect(r.status == 0, "sh -n failed for \(kind)")
     }
 
     @Test func slug() throws {
@@ -223,8 +214,9 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
         d.keyPath = keyPath
         let script = try DeployScripts.build(deployment: d, certificate: c, keyPEM: key)
 
-        let ok = (try? runShell(script, path: bin.path)) != nil
-        #expect(ok == configTestPasses)
+        let run = Result { try runShell(script, path: bin.path) }
+        let ok = (try? run.get()) != nil
+        #expect(ok == configTestPasses, "\(run)")
         let installed = try String(contentsOfFile: certPath, encoding: .utf8)
         let installedKey = try String(contentsOfFile: keyPath, encoding: .utf8)
         if configTestPasses {
@@ -243,7 +235,7 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
 
 @Suite @MainActor struct PolicyTests {
     func model() -> AppModel {
-        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
     }
 
     @Test func renewalStatus() throws {
@@ -301,9 +293,10 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
     @Test func persistsInventory() throws {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json")
         defer { try? FileManager.default.removeItem(at: url) }
-        let m = AppModel(fileURL: url)
+        let store = MemorySecretStore()
+        let m = AppModel(fileURL: url, secrets: store)
         m.addHost(ManagedHost(name: "pve", address: "pve.lan"))
-        let reloaded = AppModel(fileURL: url)
+        let reloaded = AppModel(fileURL: url, secrets: store)
         #expect(reloaded.inventory.hosts.map(\.name) == ["pve"])
     }
 }
@@ -321,6 +314,15 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
 
 @discardableResult
 func runShell(_ script: String, path: String, env: [String: String] = [:]) throws -> String {
+    #if os(Linux)
+    // Foundation's Process passes blocked signals on to children here; see CleanSpawn.
+    let environment = ["PATH": "\(path):/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": FileManager.default.temporaryDirectory.path]
+        .merging(env) { $1 }
+    SSHRunner.ignoreSIGPIPE()
+    let r = try CleanSpawn.run("/bin/sh", ["-s"], environment: environment, stdin: Data(SSHRunner.shielded(script).utf8))
+    guard r.status == 0 else { throw DeployError("exit \(r.status): \(String(decoding: r.stderr, as: UTF8.self))") }
+    return String(decoding: r.stdout, as: UTF8.self)
+    #else
     let p = Process()
     p.executableURL = URL(fileURLWithPath: "/bin/sh")
     p.arguments = ["-s"]
@@ -340,4 +342,5 @@ func runShell(_ script: String, path: String, env: [String: String] = [:]) throw
         throw DeployError("exit \(p.terminationStatus): \(String(decoding: errOut, as: UTF8.self))")
     }
     return String(decoding: out, as: UTF8.self)
+    #endif
 }

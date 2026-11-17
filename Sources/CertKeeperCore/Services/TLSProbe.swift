@@ -1,6 +1,8 @@
 import Foundation
+#if canImport(Network)
 import Network
 import Security
+#endif
 
 /// Connects to a TLS endpoint and returns the leaf certificate it presents (without validating trust,
 /// so self-signed and staging certificates can be inspected too).
@@ -36,6 +38,14 @@ public enum TLSProbe {
     /// The certificates the server actually sends (leaf first), not a chain rebuilt from local roots.
     public static func fetchServed(endpoint: String, timeout: TimeInterval = 10) async throws -> Served {
         let (hostPart, port) = split(endpoint)
+        let (ders, exact) = try await peerChain(host: hostPart, port: port, endpoint: endpoint, timeout: timeout)
+        guard !ders.isEmpty else { throw DeployError("No certificate presented by \(endpoint)") }
+        return Served(chain: try ders.map { try CertCrypto.summarize(der: $0) }, exact: exact)
+    }
+
+    #if canImport(Network)
+    /// The peer's certificates as DER, and whether they're exactly what it sent (see `Served.exact`).
+    static func peerChain(host hostPart: String, port: UInt16, endpoint: String, timeout: TimeInterval) async throws -> ([Data], Bool) {
         let tls = NWProtocolTLS.Options()
         let captured = CapturedCert()
         sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { metadata, trust, complete in
@@ -77,8 +87,9 @@ public enum TLSProbe {
                 once.run { connection.cancel(); continuation.resume(throwing: DeployError("TLS connection to \(endpoint) timed out")) }
             }
         }
-        return Served(chain: try ders.map { try CertCrypto.summarize(der: $0) }, exact: exact)
+        return (ders, exact)
     }
+    #endif
 
     static func split(_ endpoint: String) -> (String, UInt16) {
         var s = endpoint
@@ -94,6 +105,7 @@ public enum TLSProbe {
         return (s, 443)
     }
 
+    #if canImport(Network)
     private final class CapturedCert: @unchecked Sendable {
         private let lock = NSLock()
         private var data: ([Data], Bool)?
@@ -112,4 +124,5 @@ public enum TLSProbe {
             body()
         }
     }
+    #endif
 }

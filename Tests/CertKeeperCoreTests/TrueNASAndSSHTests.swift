@@ -97,20 +97,11 @@ struct FakeTrueNAS {
     }
 
     func run(_ script: String) throws -> String {
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/bin/sh")
-        p.arguments = ["-s"]
-        p.environment = ["PATH": "\(dir.path):/usr/bin:/bin", "FAKE_TRUENAS_STATE": stateURL.path, "FAKE_MIDCLT_STYLE": style,
-                         "TMPDIR": FileManager.default.temporaryDirectory.path]
-        let input = Pipe(), output = Pipe(), err = Pipe()
-        p.standardInput = input; p.standardOutput = output; p.standardError = err
-        try p.run()
-        SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
-        try input.fileHandleForWriting.close()
-        let out = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        let errText = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-        p.waitUntilExit()
-        guard p.terminationStatus == 0 else { throw DeployError("exit \(p.terminationStatus)\n\(out)\n\(errText)") }
+        let env = ["PATH": "\(dir.path):/usr/bin:/bin", "FAKE_TRUENAS_STATE": stateURL.path, "FAKE_MIDCLT_STYLE": style,
+                   "TMPDIR": FileManager.default.temporaryDirectory.path]
+        let r = try runTool("/bin/sh", ["-s"], environment: env, stdin: Data(SSHRunner.shielded(script).utf8))
+        let out = String(decoding: r.stdout, as: UTF8.self)
+        guard r.status == 0 else { throw DeployError("exit \(r.status)\n\(out)\n\(String(decoding: r.stderr, as: UTF8.self))") }
         return out
     }
 
@@ -205,7 +196,7 @@ struct FakeTrueNAS {
 
 @Suite @MainActor struct TrueNASModelTests {
     func model() -> AppModel {
-        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
     }
 
     @Test func adoptingUIAndAppsMergesIntoOneDeployment() throws {
@@ -252,7 +243,7 @@ struct FakeTrueNAS {
          "log":[],"acmeAccounts":{}}
         """
         try legacy.write(to: url, atomically: true, encoding: .utf8)
-        let m = AppModel(fileURL: url)
+        let m = AppModel(fileURL: url, secrets: MemorySecretStore())
         #expect(m.loadError == nil)
         #expect(m.inventory.hosts.first?.passwordLogin == false)
         #expect(m.inventory.deployments.first?.options == [:])
@@ -264,7 +255,7 @@ struct FakeTrueNAS {
         defer { try? FileManager.default.removeItem(at: dir) }
         let url = dir.appendingPathComponent("inventory.json")
         try "{ not json".write(to: url, atomically: true, encoding: .utf8)
-        let m = AppModel(fileURL: url)
+        let m = AppModel(fileURL: url, secrets: MemorySecretStore())
         #expect(m.loadError != nil)
         m.addHost(ManagedHost(name: "x", address: "x"))
         let files = try FileManager.default.contentsOfDirectory(atPath: dir.path)
@@ -375,12 +366,9 @@ struct FakeTrueNAS {
         let c = dir.appendingPathComponent("tmp-cert.pem"), k = dir.appendingPathComponent("tmp-key.pem")
         try certPEM.write(to: c, atomically: true, encoding: .utf8)
         try keyPEM.write(to: k, atomically: true, encoding: .utf8)
-        let p = Process()
-        p.executableURL = URL(fileURLWithPath: "/usr/bin/openssl")
-        p.arguments = ["pkcs12", "-export", "-out", url.path, "-inkey", k.path, "-in", c.path, "-passout", "pass:\(password)"]
-        try p.run(); p.waitUntilExit()
+        let r = try runTool("/usr/bin/openssl", ["pkcs12", "-export", "-out", url.path, "-inkey", k.path, "-in", c.path, "-passout", "pass:\(password)"])
         try FileManager.default.removeItem(at: c); try FileManager.default.removeItem(at: k)
-        #expect(p.terminationStatus == 0)
+        #expect(r.status == 0)
     }
 
     func write(_ text: String, _ url: URL) throws {
@@ -454,7 +442,7 @@ struct FakeTrueNAS {
     }
 
     @MainActor @Test func adoptingCarriesFormatRestartAndPort() throws {
-        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"))
+        let m = AppModel(fileURL: FileManager.default.temporaryDirectory.appendingPathComponent("ck-\(UUID().uuidString).json"), secrets: MemorySecretStore())
         let (pem, _) = try selfSigned(["jellyfin.example.com"])
         let host = ManagedHost(name: "nas", address: "nas.example.com")
         m.addHost(host)
