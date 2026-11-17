@@ -139,10 +139,13 @@ final class ServerTLS: @unchecked Sendable {
         try reload()
     }
 
-    /// The SHA-256 of the managed certificate file's leaf, if there is one.
+    /// The SHA-256 of the managed certificate file's leaf, if there is one. The file holds the full
+    /// chain, so the leaf is the first of several certificates.
     var managedLeafSHA256: String? {
-        guard let pem = try? String(contentsOf: managedCertificateFile, encoding: .utf8) else { return nil }
-        return try? CertCrypto.summarize(pem: pem).sha256
+        guard let pem = try? String(contentsOf: managedCertificateFile, encoding: .utf8),
+              let leaf = try? NIOSSLCertificate.fromPEMBytes(Array(pem.utf8)).first,
+              let der = try? leaf.toDERBytes() else { return nil }
+        return try? CertCrypto.summarize(der: Data(der)).sha256
     }
 
     static func makeSelfSigned(certificate: URL, key: URL) throws {

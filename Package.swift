@@ -41,6 +41,12 @@ var targets: [Target] = [
         swiftSettings: [.swiftLanguageMode(.v5)]
     ),
     .testTarget(
+        name: "CertKeeperServerTests",
+        dependencies: ["CertKeeperServer", "CertKeeperCore", .product(name: "X509", package: "swift-certificates"),
+                       .product(name: "Crypto", package: "swift-crypto")],
+        swiftSettings: [.swiftLanguageMode(.v5)]
+    ),
+    .testTarget(
         name: "CertKeeperCoreTests",
         dependencies: ["CertKeeperCore"],
         swiftSettings: [.swiftLanguageMode(.v5)]
