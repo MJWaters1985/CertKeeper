@@ -1028,6 +1028,12 @@ public final class AppModel {
         }
     }
 
+    /// Stops the periodic rotation pass (at shutdown). A pass already running finishes its current step.
+    public func stopScheduler() {
+        schedulerTask?.cancel()
+        schedulerTask = nil
+    }
+
     public func startScheduler() {
         schedulerTask?.cancel()
         schedulerTask = Task { [weak self] in

@@ -6,7 +6,11 @@ import Security
 
 /// JSON file persistence for the inventory in ~/Library/Application Support/CertKeeper.
 public enum InventoryFile {
+    /// Where everything lives when set (the server's /config); otherwise the platform default.
+    nonisolated(unsafe) public static var directoryOverride: URL?
+
     public static var directory: URL {
+        if let directoryOverride { return directoryOverride }
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         return base.appendingPathComponent("CertKeeper", isDirectory: true)
     }
