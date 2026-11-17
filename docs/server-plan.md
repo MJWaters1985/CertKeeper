@@ -27,6 +27,8 @@ TrueNAS community app catalog. The macOS app stays in this repository and shares
   - TLS probe and device API client (Network.framework) → SwiftNIO.
 - A `CertKeeperServer` executable: a browser UI with every function the Mac app has, behind
   a login (the app holds SSH credentials and a Cloudflare token).
+- An About section in the web UI, like the Mac app's About panel: version, license, links to
+  the source and issues, and the Buy Me a Coffee link.
 - Build and test on Linux in Docker. The Mac has no Linux toolchain.
 
 ### 3. Container

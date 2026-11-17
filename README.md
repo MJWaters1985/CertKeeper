@@ -172,6 +172,12 @@ CK_ACME_STAGING=1 swift test --filter ACMEStaging    # live check against Let's 
   `certificate_id` fields changed.
 * The app has to be running for scheduled rotation. It stays in the menu bar, and *Open at login* is in Settings › Schedule.
 
+## Support
+
+CertKeeper is a free, one-person project. Problems and ideas go in
+[GitHub issues](https://github.com/MJWaters1985/CertKeeper/issues). If it saves you time,
+you can [buy me a coffee](https://buymeacoffee.com/mjwaters1985).
+
 ## License
 
 Copyright 2026 Mike Waters. Licensed under the [Apache License, Version 2.0](LICENSE); see [NOTICE](NOTICE).

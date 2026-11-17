@@ -110,15 +110,32 @@ enum AboutPanel {
     systems can be monitored for expiry. Secrets stay in your macOS Keychain.
     """
 
+    static let repository = URL(string: "https://github.com/MJWaters1985/CertKeeper")!
+    static let coffee = URL(string: "https://buymeacoffee.com/mjwaters1985")!
+
     static func show() {
         let paragraph = NSMutableParagraphStyle()
         paragraph.alignment = .center
         paragraph.paragraphSpacing = 6
-        let credits = NSAttributedString(string: summary, attributes: [
+        let attributes: [NSAttributedString.Key: Any] = [
             .font: NSFont.systemFont(ofSize: NSFont.smallSystemFontSize),
             .foregroundColor: NSColor.labelColor,  // follows light/dark mode
             .paragraphStyle: paragraph,
-        ])
+        ]
+        let credits = NSMutableAttributedString(string: summary + "\n\n", attributes: attributes)
+        credits.append(NSAttributedString(string: "CertKeeper is a free, one-person project. If it saves you time, you can support it.\n",
+                                          attributes: attributes))
+        let links: [(String, URL)] = [
+            ("Source code", repository),
+            ("Report a problem", repository.appendingPathComponent("issues")),
+            ("☕ Buy me a coffee", coffee),
+        ]
+        for (i, (title, url)) in links.enumerated() {
+            if i > 0 { credits.append(NSAttributedString(string: url == coffee ? "\n" : "  ·  ", attributes: attributes)) }
+            var link = attributes
+            link[.link] = url
+            credits.append(NSAttributedString(string: title, attributes: link))
+        }
         NSApp.orderFrontStandardAboutPanel(options: [.credits: credits])
         NSApp.activate()
     }
