@@ -12,6 +12,7 @@ enum Server {
         SSHRunner.ignoreSIGPIPE()
         try FileManager.default.createDirectory(at: config.configDirectory, withIntermediateDirectories: true)
         InventoryFile.directoryOverride = config.configDirectory
+        UserEntry.ensure(config)
         ServerState.print("CertKeeper \(version) starting; configuration in \(config.configDirectory.path)")
 
         let (key, keySource) = try SecretsKey.load(config)
@@ -116,5 +117,36 @@ enum SSHKeys {
             }
         }
         return (try? String(contentsOf: pub, encoding: .utf8))?.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+}
+
+/// OpenSSH refuses to run for a uid without a passwd entry ("No user exists for uid"), and the
+/// TrueNAS install form lets people run the app as any uid. When the image has no entry for the
+/// current uid, CertKeeper writes passwd/group files that include it and has its child processes
+/// (ssh, ssh-keygen) read them through nss_wrapper, so nothing in the image needs to be writable.
+enum UserEntry {
+    static func ensure(_ config: ServerConfig) {
+        #if os(Linux)
+        let uid = getuid(), gid = getgid()
+        guard getpwuid(uid) == nil else { return }
+        let dir = config.configDirectory.appendingPathComponent(".nss", isDirectory: true)
+        let passwd = dir.appendingPathComponent("passwd"), group = dir.appendingPathComponent("group")
+        let home = ProcessInfo.processInfo.environment["HOME"] ?? config.configDirectory.path
+        let systemPasswd = (try? String(contentsOfFile: "/etc/passwd", encoding: .utf8)) ?? ""
+        var systemGroup = (try? String(contentsOfFile: "/etc/group", encoding: .utf8)) ?? ""
+        if getgrgid(gid) == nil { systemGroup += "certkeeper:x:\(gid):\n" }
+        do {
+            try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            try FileSecurity.writePrivate(Data((systemPasswd + "certkeeper:x:\(uid):\(gid):CertKeeper:\(home):/usr/sbin/nologin\n").utf8), to: passwd)
+            try FileSecurity.writePrivate(Data(systemGroup.utf8), to: group)
+        } catch {
+            ServerState.print("warning: uid \(uid) has no user entry and one couldn't be written (\(error.localizedDescription)); SSH won't work")
+            return
+        }
+        setenv("LD_PRELOAD", "libnss_wrapper.so", 1)
+        setenv("NSS_WRAPPER_PASSWD", passwd.path, 1)
+        setenv("NSS_WRAPPER_GROUP", group.path, 1)
+        ServerState.print("uid \(uid) has no user entry in the image; SSH uses one from \(dir.path)")
+        #endif
     }
 }

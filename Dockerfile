@@ -32,10 +32,11 @@ RUN case "$TARGETARCH" in \
 
 FROM debian:trixie-slim
 # ssh to reach hosts, openssl for PKCS#12/PKCS#7 exports, curl for the health check, tini to reap
-# the ssh processes CertKeeper starts (including ControlMaster helpers).
+# the ssh processes CertKeeper starts (including ControlMaster helpers), nss_wrapper so ssh works
+# under any uid (see UserEntry).
 RUN apt-get update \
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-      openssh-client openssl curl ca-certificates tini \
+      openssh-client openssl curl ca-certificates tini libnss-wrapper \
  && rm -rf /var/lib/apt/lists/* \
  && groupadd -g 568 apps \
  && useradd -u 568 -g 568 -d /config -M -s /usr/sbin/nologin apps \
