@@ -39,7 +39,7 @@ def certificate(names, days_left, key_file="/dev/null"):
         ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
          "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
          "-keyout", key_file, "-subj", f"/CN={names[0]}", "-addext", f"subjectAltName={san}", "-days", str(days_left),
-         # A positive serial: LibreSSL (macOS) encodes one with the top bit set as negative.
+         # A positive serial: LibreSSL encodes one with the top bit set as negative.
          "-set_serial", str(int.from_bytes(os.urandom(7), "big") + 1)],
         capture_output=True, text=True, check=True).stdout
     der = subprocess.run(["openssl", "x509", "-outform", "DER"], input=pem.encode(), capture_output=True, check=True).stdout

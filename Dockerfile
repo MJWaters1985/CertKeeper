@@ -1,8 +1,8 @@
 # CertKeeper server image.
 #
 # The build stage runs on the build machine's own architecture and cross-compiles a fully static
-# binary for the target with Swift's static Linux SDK, so building an amd64 image on an ARM Mac
-# (or the reverse) needs no emulation:
+# binary for the target with Swift's static Linux SDK, so building the amd64 image on an ARM machine
+# needs no emulation:
 #
 #   docker build --platform linux/amd64 -t certkeeper .
 

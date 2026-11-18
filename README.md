@@ -5,8 +5,7 @@ your servers and devices over SSH: nginx, Apache, Proxmox VE, TrueNAS and its ap
 Pi-hole and more. It keeps an inventory, so it only renews and redeploys when needed, and it checks what
 each service actually serves.
 
-It runs as a container with a web interface, on TrueNAS or any Docker host:
-`ghcr.io/mjwaters1985/certkeeper`.
+CertKeeper is a TrueNAS app with a web interface. Its image is `ghcr.io/mjwaters1985/certkeeper`.
 
 ![The overview: certificates, how long each is valid, and where they're deployed](docs/screenshots/1-overview.png)
 
@@ -17,15 +16,15 @@ More screenshots: [a certificate](docs/screenshots/2-certificate.png),
 
 ## Documentation
 
-* **[Installing and running CertKeeper](docs/server.md)**: TrueNAS and Docker, first start, HTTPS for
-  the web interface, its own address and port 443 on TrueNAS, backups, updates and troubleshooting.
+* **[Installing and running CertKeeper](docs/server.md)**: installing it on TrueNAS, first start, HTTPS
+  for the web interface, its own address and port 443, backups, updates and troubleshooting.
 * **[The Cloudflare API token](docs/cloudflare-token.md)**: the permissions it needs and how to create it.
 * The rest of this page: how CertKeeper works and what it supports.
 
 ## How it works
 
 ```
-CertKeeper (container)                                 Hosts
+CertKeeper (TrueNAS app)                               Hosts
  ├─ ACME client ──► Let's Encrypt                       nginx · Apache · Proxmox VE · TrueNAS
  ├─ Cloudflare API ──► _acme-challenge TXT records      UniFi OS · OPNsense · Pi-hole · apps
  └─ ssh ────────────────────────────────────────────►   install script per target
@@ -147,12 +146,12 @@ itself shows.
 |---|---|---|
 | PEM, separate files | `NAME.cert.pem`, `.chain.pem`, `.fullchain.pem`, `.privkey.pem` | nginx, Apache, most Linux tools |
 | PEM, single file | `NAME.pem` (private key, then full chain) | HAProxy, Pi-hole, lighttpd |
-| PKCS#12 | `NAME.p12` (full chain and key, password protected; AES-256, or 3DES and SHA-1 for older systems) | Windows/IIS, macOS Keychain, Java, Jellyfin |
+| PKCS#12 | `NAME.p12` (full chain and key, password protected; AES-256, or 3DES and SHA-1 for older systems) | Windows/IIS, Java, Jellyfin |
 | PKCS#7 + key | `NAME.p7b` (full chain) and `NAME.key` (PEM) | Windows, Java |
 | DER + key | `NAME.cer`, `NAME.chain-N.cer`, `NAME.key.der` (PKCS#8) | Windows, appliances, Android |
 
-Every format includes the private key, so keep the files safe. PKCS#12 and PKCS#7 files are made with the
-container's `openssl`, in a private temporary folder.
+Every format includes the private key, so keep the files safe. PKCS#12 and PKCS#7 files are made with
+`openssl` inside the app, in a private temporary folder.
 
 ## Exporting and importing the configuration
 
@@ -167,12 +166,18 @@ inventory is first saved to `inventory.before-import-<time>.json` in `/config`, 
 The log then lists any certificates without a private key (issue them again before deploying) and hosts
 without a password.
 
-## Tests
+## Building and testing
+
+The app's image builds from the `Dockerfile` (for `linux/amd64`, the platform TrueNAS runs on):
 
 ```sh
-swift test       # macOS or Linux: unit tests, plus the real install and discovery scripts run against stubs
+docker build --platform linux/amd64 -t certkeeper .
+```
 
-# The Linux tests as CI runs them, in a container with the tools the scripts use:
+The tests cover the engine, the server, and the real install and discovery scripts run against stubs.
+They run as CI runs them, in a container with the tools the scripts use:
+
+```sh
 docker build -t certkeeper-test -f docker/test.Dockerfile docker
 docker run --rm --user 568:568 -e HOME=/tmp/home -v "$PWD":/src:ro -w /src certkeeper-test \
   sh -c 'mkdir -p /tmp/home && swift test --scratch-path /tmp/build'

@@ -4,8 +4,7 @@ All notable changes to CertKeeper. Versions follow [semantic versioning](https:/
 
 ## 1.0.0 — 2026-11-18
 
-The first public release: a container with a web interface, for TrueNAS and any Docker host
-(`ghcr.io/mjwaters1985/certkeeper`).
+The first public release: a TrueNAS app with a web interface (`ghcr.io/mjwaters1985/certkeeper`).
 
 - Issues Let's Encrypt certificates (ECDSA or RSA, wildcards included) with DNS-01 validation through
   Cloudflare. Hosts never need an ACME client or the Cloudflare token.

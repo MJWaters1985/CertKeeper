@@ -13,7 +13,7 @@ const KEY_TYPES = ['ECDSA P-256', 'ECDSA P-384', 'RSA 2048', 'RSA 4096'];
 const EXPORT_FORMATS = [
   ['pemSeparate', 'PEM — separate files', 'cert.pem, chain.pem, fullchain.pem and privkey.pem: nginx, Apache, most Linux tools.'],
   ['pemCombined', 'PEM — single file', 'One file with the private key and full chain: HAProxy, Pi-hole, lighttpd.'],
-  ['pkcs12', 'PKCS#12 (.p12 / .pfx)', 'One password-protected file with the full chain and key: Windows/IIS, macOS Keychain, Java, Jellyfin.'],
+  ['pkcs12', 'PKCS#12 (.p12 / .pfx)', 'One password-protected file with the full chain and key: Windows/IIS, Java, Jellyfin.'],
   ['pkcs7', 'PKCS#7 (.p7b) + key', 'The full chain in a .p7b (PKCS#7 can’t hold keys) plus the key as a separate PEM file: Windows, Java.'],
   ['der', 'DER (.cer) + key', 'Each certificate as binary .cer (leaf, then intermediates) plus the key as binary PKCS#8: Windows, appliances, Android.'],
 ];

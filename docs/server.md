@@ -1,10 +1,9 @@
-# Installing and running CertKeeper
+# Installing and running CertKeeper on TrueNAS
 
-CertKeeper runs as a container with an HTTPS web interface. It issues Let's Encrypt certificates through
+CertKeeper is a TrueNAS app with an HTTPS web interface. It issues Let's Encrypt certificates through
 Cloudflare DNS-01 and installs them on your hosts over SSH, on a schedule.
 
 * [Install on TrueNAS](#install-on-truenas)
-* [Install with Docker](#install-with-docker)
 * [First start](#first-start)
 * [Hosts and SSH](#hosts-and-ssh)
 * [HTTPS for the web interface](#https-for-the-web-interface)
@@ -40,37 +39,6 @@ On TrueNAS Community Edition 24.10 or later, install CertKeeper as a custom app:
 To reach CertKeeper at `https://certkeeper.example.com` without a port number, see
 [its own address, name and port 443](#its-own-address-name-and-port-443-on-truenas).
 
-## Install with Docker
-
-```yaml
-# compose.yaml
-services:
-  certkeeper:
-    image: ghcr.io/mjwaters1985/certkeeper:1.0.0
-    restart: unless-stopped
-    user: "568:568"
-    ports:
-      - "8443:8443"
-    volumes:
-      - ./config:/config      # must be writable by uid 568
-    stop_grace_period: 3m     # lets a running deployment finish on stop
-```
-
-```bash
-mkdir -p config && sudo chown 568:568 config
-docker compose up -d
-docker compose logs certkeeper     # shows the one-time setup code
-```
-
-Open `https://<server>:8443`. Until CertKeeper has a real certificate (see
-[HTTPS](#https-for-the-web-interface)), the browser warns that the certificate isn't trusted.
-
-The image is for `linux/amd64`. To build it yourself, for this or another architecture, from any host:
-
-```bash
-docker build --platform linux/amd64 -t certkeeper .
-```
-
 ## First start
 
 1. The log shows a **one-time setup code**. Open the web interface and enter it with the username and
@@ -93,8 +61,8 @@ docker build --platform linux/amd64 -t certkeeper .
   tries passwordless `sudo -n`, then the stored password.
 * **Host keys.** A host's SSH key is trusted the first time CertKeeper connects and checked after that.
   If a host is rebuilt and its key changes, connecting fails with *REMOTE HOST IDENTIFICATION HAS CHANGED*.
-  Once you've confirmed the change is expected, remove the old key in the app's shell (TrueNAS: the app's
-  **Shell**; Docker: `docker exec -it <container> sh`):
+  Once you've confirmed the change is expected, remove the old key in the app's **Shell** (Apps › CertKeeper
+  › Workloads › Shell):
 
   ```sh
   ssh-keygen -R host.example.com -f /config/.ssh/known_hosts
@@ -143,10 +111,10 @@ couldn't reach the NAS itself to manage its certificates.
 
 | Variable | Default | |
 |---|---|---|
-| `CERTKEEPER_PORT` | `8443` | HTTPS port inside the container |
-| `CERTKEEPER_HOST` | `0.0.0.0` | Address to listen on inside the container |
+| `CERTKEEPER_PORT` | `8443` | HTTPS port inside the app's container |
+| `CERTKEEPER_HOST` | `0.0.0.0` | Address to listen on inside the app's container |
 | `CERTKEEPER_CONFIG_DIR` | `/config` | All state; also `HOME` |
-| `CERTKEEPER_TLS_CERT`, `CERTKEEPER_TLS_KEY` | | A certificate and key (PEM) for the web interface. Set both or neither |
+| `CERTKEEPER_TLS_CERT`, `CERTKEEPER_TLS_KEY` | | A certificate and key (PEM files mounted into the app) for the web interface. Set both or neither |
 | `CERTKEEPER_SECRET_KEY` | | The key for the secrets file (see [Secrets](#secrets)) |
 | `CERTKEEPER_SCHEDULE` | `on` | `off` stops automatic rotation passes (for demos and tests) |
 
@@ -169,7 +137,7 @@ CertKeeper runs as uid 568 (TrueNAS's `apps` user) by default, but any uid works
 | `.ssh/` | CertKeeper's SSH key, `known_hosts` and an optional `config` |
 | `inventory.before-import-*.json` | Copies saved before each configuration import |
 
-The activity log is also written to the container's log (in TrueNAS, the app's **Logs**).
+The activity log is also written to the app's **Logs**.
 
 ## Secrets
 
@@ -183,16 +151,16 @@ is later added, changed or removed, CertKeeper refuses to start rather than lose
 
 ## Backups, updates and moving
 
-* **Backups.** Back up the whole `/config` folder (on TrueNAS, snapshot or replicate the dataset).
+* **Backups.** Snapshot or replicate the app's dataset, which holds everything in `/config`.
   **Settings › Configuration › Export** with a password also saves everything, secrets included, in one
   file.
-* **Updates.** Change the image tag (on TrueNAS, edit the app's YAML; with Docker, edit `compose.yaml` and
-  run `docker compose up -d`). Releases are listed on the
+* **Updates.** Edit the app's YAML (Apps › CertKeeper › Edit) and change the image tag. Releases are listed
+  on the
   [releases page](https://github.com/MJWaters1985/CertKeeper/releases). On stop, CertKeeper waits up to
   about three minutes for a running deployment to finish. A deployment that still gets cut off stays out of
   date and is redeployed by the first rotation pass after the restart.
-* **Moving to another server.** Export the configuration with a password, start CertKeeper on the new
-  server, and import the file in **Settings › Configuration**. Then add the new server's SSH key to your
+* **Moving to another NAS.** Export the configuration with a password, install CertKeeper on the new NAS,
+  and import the file in **Settings › Configuration**. Then add the new installation's SSH key to your
   hosts, or rely on the imported host passwords. Stop the old installation, so the two don't both renew
   the same certificates.
 
@@ -212,7 +180,7 @@ is later added, changed or removed, CertKeeper refuses to start rather than lose
 | A deployment says *Needs attention* | The service's configuration no longer reads the files CertKeeper writes, for example after a firmware update reset it. Check the deployment's paths, or discover the host again |
 | Let's Encrypt rate limits | Use staging while testing. Production allows only a few certificates for the same names each week |
 
-The activity log (and the container's log) has the details of each step.
+The activity log (and the app's **Logs**) has the details of each step.
 
 ## Security
 

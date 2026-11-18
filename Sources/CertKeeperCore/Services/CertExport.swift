@@ -4,7 +4,7 @@ import SwiftASN1
 import X509
 
 /// Exports an issued certificate (with its full chain and private key) in common file formats.
-/// PKCS#12 and PKCS#7 are produced by macOS's /usr/bin/openssl (LibreSSL); the rest are built here.
+/// PKCS#12 and PKCS#7 are produced by `openssl`; the rest are built here.
 public enum CertExport {
     public enum Format: String, CaseIterable, Identifiable, Sendable {
         case pemSeparate, pemCombined, pkcs12, pkcs7, der
@@ -25,7 +25,7 @@ public enum CertExport {
             switch self {
             case .pemSeparate: "cert.pem, chain.pem, fullchain.pem and privkey.pem: nginx, Apache, most Linux tools."
             case .pemCombined: "One file with the private key and full chain: HAProxy, Pi-hole, lighttpd."
-            case .pkcs12: "One password-protected file with the full chain and key: Windows/IIS, macOS Keychain, Java, Jellyfin."
+            case .pkcs12: "One password-protected file with the full chain and key: Windows/IIS, Java, Jellyfin."
             case .pkcs7: "The full chain in a .p7b (PKCS#7 can't hold keys) plus the key as a separate PEM file: Windows, Java."
             case .der: "Each certificate as binary .cer (leaf, then intermediates) plus the key as binary PKCS#8: Windows, appliances, Android."
             }
