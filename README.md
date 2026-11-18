@@ -15,7 +15,8 @@ It comes in two editions that share one engine:
 
 More screenshots: [a certificate](docs/screenshots/2-certificate.png),
 [a host with discovered certificates](docs/screenshots/3-host.png),
-[activity](docs/screenshots/4-activity.png), [on a phone](docs/screenshots/5-phone.png).
+[activity](docs/screenshots/4-activity.png), [its own HTTPS certificate](docs/screenshots/6-own-certificate.png),
+[on a phone](docs/screenshots/5-phone.png).
 The demo data comes from `tools/demo/run.sh`.
 
 ## How it works

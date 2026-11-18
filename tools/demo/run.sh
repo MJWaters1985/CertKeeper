@@ -20,7 +20,7 @@ trap 'kill $SERVER 2>/dev/null; wait $SERVER 2>/dev/null; rm -rf "$DEMO"' EXIT
 for _ in $(seq 1 30); do curl -fsk "https://127.0.0.1:$PORT/healthz" >/dev/null 2>&1 && break; sleep 1; done
 
 docker run --rm --add-host=host.docker.internal:host-gateway \
-  -e CERTKEEPER_URL="https://host.docker.internal:$PORT" \
+  -e CERTKEEPER_URL="https://certkeeper.example.com:$PORT" \
   -v "$PWD/tools/demo:/demo:ro" -v "$PWD/docs/screenshots:/out" \
   "$PLAYWRIGHT_IMAGE" sh -c 'pip install -q playwright==1.65.2 && python3 /demo/screenshots.py /out'
 echo "Screenshots in docs/screenshots"

@@ -277,7 +277,9 @@ function renderOverview() {
             .map(([t, cls]) => h('th', { text: t, class: cls })))),
           h('tbody', {}, sorted.map(c => {
             const cert = c.certificate, deps = st.deployments.filter(d => d.deployment.certificateID === cert.id && d.state.kind !== 'disabled');
-            const ok = deps.filter(d => ['current', 'watching'].includes(d.state.kind)).length;
+            // The web interface counts as one more place it's deployed.
+            const total = deps.length + (c.webInterface ? 1 : 0);
+            const ok = deps.filter(d => ['current', 'watching'].includes(d.state.kind)).length + (c.webInterface?.serving ? 1 : 0);
             const days = cert.current ? Math.floor((new Date(cert.current.notAfter) - Date.now()) / 86400000) : null;
             return h('tr', {},
               h('td', {}, h('a', { href: `#/certificate/${cert.id}`, text: cert.name })),
@@ -286,7 +288,7 @@ function renderOverview() {
               h('td', {}, days === null ? '—' : h('span', { class: 'badge ' + (days < 0 ? 'red' : days <= c.renewalWindow ? 'orange' : 'green'),
                 text: days < 0 ? 'Expired' : `${days} days` })),
               h('td', { class: 'wide-only' }, cert.external ? h('span', { class: 'badge purple', text: 'Monitored' }) : h('span', { class: 'badge blue', text: 'Managed' })),
-              h('td', { class: 'nowrap', text: deps.length ? `${ok}/${deps.length} current` : '—' }));
+              h('td', { class: 'nowrap', text: total ? `${ok}/${total} current` : '—' }));
           })))),
   ];
 }
@@ -329,9 +331,24 @@ function renderCertificate(id) {
     h('h2', {}, 'Deployments', h('span', { class: 'spacer' }),
       h('button', { text: '+ Add deployment', title: 'Install this certificate on another host',
         onclick: () => deploymentModal(null, { certificateID: id }) })),
-    h('div', { class: 'panel' }, deps.length ? deps.map(d => deploymentItem(d, 'host')) :
+    h('div', { class: 'panel' }, (deps.length || c.webInterface) ? [c.webInterface ? webInterfaceItem(c.webInterface) : null, deps.map(d => deploymentItem(d, 'host'))] :
       h('div', { class: 'empty', text: monitored ? 'Nothing to watch yet.' : 'Not deployed anywhere yet. Add a deployment, or discover a host and adopt what it serves.' })),
   ];
+}
+
+/// This CertKeeper's own web interface, listed with the deployments of the certificate it serves.
+function webInterfaceItem(w) {
+  const source = w.chosen ? 'CertKeeper installs and renews it here (Settings › Web interface HTTPS)'
+    : w.mode === 'platform' ? 'Provided by the install settings (CERTKEEPER_TLS_CERT)' : 'In use by the web interface';
+  return h('div', { class: 'item' },
+    h('div', { class: 'body' },
+      h('div', { class: 'title', text: 'This CertKeeper · Web interface' }),
+      h('div', { class: 'mono muted', text: location.origin }),
+      h('div', { class: 'muted small', text: w.serving ? `Serving a certificate expiring ${fmtDay(w.notAfter)}` : 'Switching to the current certificate within a minute' }),
+      h('div', { class: 'muted small', text: source })),
+    h('div', { class: 'actions' },
+      h('span', { class: `badge ${w.serving ? 'green' : 'blue'}`, text: w.serving ? 'Current' : 'Switching' }),
+      h('a', { class: 'button', href: '#/settings', text: 'Settings', title: 'Choose the certificate for the web interface' })));
 }
 
 function row(k, v) { return h('div', { class: 'row' }, h('div', { class: 'k', text: k }), h('div', { class: 'v' }, v)); }

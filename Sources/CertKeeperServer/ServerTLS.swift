@@ -35,9 +35,21 @@ final class ServerTLS: @unchecked Sendable {
     var managedKeyFile: URL { config.tlsDirectory.appendingPathComponent("privkey.pem") }
     private var selfSignedDirectory: URL { config.tlsDirectory.appendingPathComponent("self-signed", isDirectory: true) }
 
+    /// Why the configured certificate couldn't be used at startup, when the self-signed one stands in.
+    private(set) var startupProblem: String?
+
+    /// Starts on the configured certificate, or on the self-signed one if that can't be loaded, so a
+    /// bad certificate file never locks people out of the web interface. The periodic reload switches
+    /// over once the files are fixed.
     init(config: ServerConfig) throws {
         self.config = config
-        try reload(force: true)
+        do {
+            try reload(force: true)
+        } catch {
+            startupProblem = error.localizedDescription
+            let fallback = try selfSignedFiles()
+            try load((fallback.cert, fallback.key, .selfSigned), stamp: "self-signed fallback")
+        }
     }
 
     var status: Status? { lock.lock(); defer { lock.unlock() }; return current }
@@ -51,11 +63,16 @@ final class ServerTLS: @unchecked Sendable {
            FileManager.default.fileExists(atPath: managedKeyFile.path) {
             return (managedCertificateFile.path, managedKeyFile.path, .managed)
         }
+        let selfSigned = try selfSignedFiles()
+        return (selfSigned.cert, selfSigned.key, .selfSigned)
+    }
+
+    private func selfSignedFiles() throws -> (cert: String, key: String) {
         let cert = selfSignedDirectory.appendingPathComponent("cert.pem"), key = selfSignedDirectory.appendingPathComponent("key.pem")
         if !FileManager.default.fileExists(atPath: cert.path) || !FileManager.default.fileExists(atPath: key.path) {
             try Self.makeSelfSigned(certificate: cert, key: key)
         }
-        return (cert.path, key.path, .selfSigned)
+        return (cert.path, key.path)
     }
 
     /// Loads the active files if they changed (by path, size and modification time). Returns true
@@ -73,9 +90,14 @@ final class ServerTLS: @unchecked Sendable {
         if unchanged && !force { return false }
         do {
             try load(files, stamp: stamp)
-        } catch {
+        } catch let error as ConfigError {
             lock.lock(); failedStamp = stamp; lock.unlock()
             throw error
+        } catch {
+            lock.lock(); failedStamp = stamp; lock.unlock()
+            // Parser errors can carry whole encoded structures; the start says what's wrong.
+            let detail = String(describing: error)
+            throw ConfigError("\(files.cert) can't be used: \(detail.count > 200 ? detail.prefix(200) + "…" : Substring(detail))")
         }
         return true
     }

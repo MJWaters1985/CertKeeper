@@ -32,6 +32,9 @@ enum Server {
         if let problem = await MainActor.run(body: { model.loadError }) { ServerState.print("warning: \(problem)") }
         let auth = try Auth(usersFile: config.usersFile)
         let tls = try ServerTLS(config: config)
+        if let problem = tls.startupProblem {
+            ServerState.print("error: the web interface's certificate couldn't be loaded, so it's using its self-signed one until the files are fixed: \(problem)")
+        }
         let state = ServerState(config: config, model: model, auth: auth, tls: tls,
                                 sshPublicKey: SSHKeys.ensure(config), secretsKeySource: keySource)
         await MainActor.run {

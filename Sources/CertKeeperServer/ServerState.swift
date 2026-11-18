@@ -143,12 +143,21 @@ final class ServerState: @unchecked Sendable {
 
     @MainActor func snapshot() -> Snapshot {
         let busy = model.busy
+        let served = tls.status
+        let chosen = serverCertificateID
         let certificates = model.sortedCertificates.map { c -> CertDTO in
             var stripped = c
             stripped.leafPEM = nil
             stripped.chainPEM = nil
+            // The web interface counts as a place the certificate is in use: when it's the one being
+            // served (whichever way it got there), or the one chosen for it but not yet loaded.
+            let serving = served != nil && c.current?.sha256 == served?.sha256
+            let web = serving || c.id == chosen
+                ? WebInterfaceUseDTO(serving: serving, chosen: c.id == chosen, mode: served?.mode, notAfter: serving ? served?.notAfter : nil)
+                : nil
             return CertDTO(certificate: stripped, status: StatusDTO(model.status(of: c)), busy: busy.contains(c.id),
-                           renewalWindow: model.renewalWindow(for: c), hasKey: model.secrets.get(.certificateKey(c.id)) != nil)
+                           renewalWindow: model.renewalWindow(for: c), hasKey: model.secrets.get(.certificateKey(c.id)) != nil,
+                           webInterface: web)
         }
         let hosts = model.sortedHosts.map { h -> HostDTO in
             let health = model.health(ofHost: h.id)
@@ -260,6 +269,17 @@ struct CertDTO: Encodable {
     var busy: Bool
     var renewalWindow: Int
     var hasKey: Bool
+    /// Set when this certificate is (or is about to be) the web interface's own.
+    var webInterface: WebInterfaceUseDTO?
+}
+
+struct WebInterfaceUseDTO: Encodable {
+    /// The web interface serves exactly this certificate now.
+    var serving: Bool
+    /// Picked in Settings › Web interface HTTPS (CertKeeper installs and renews it there).
+    var chosen: Bool
+    var mode: ServerTLS.Mode?
+    var notAfter: Date?
 }
 
 struct HealthDTO: Encodable { var level: String; var summary: String }

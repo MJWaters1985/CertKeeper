@@ -32,15 +32,21 @@ def ident():
     return str(uuid.uuid4()).upper()
 
 
-def certificate(names, days_left):
+def certificate(names, days_left, key_file="/dev/null"):
     """A self-signed stand-in (only its PEM and fingerprint are used) and its inventory summary."""
     san = ",".join(f"DNS:{n}" for n in names)
     pem = subprocess.run(
-        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256", "-nodes",
-         "-keyout", "/dev/null", "-subj", f"/CN={names[0]}", "-addext", f"subjectAltName={san}", "-days", "90"],
+        ["openssl", "req", "-x509", "-newkey", "ec", "-pkeyopt", "ec_paramgen_curve:P-256",
+         "-pkeyopt", "ec_param_enc:named_curve", "-nodes",
+         "-keyout", key_file, "-subj", f"/CN={names[0]}", "-addext", f"subjectAltName={san}", "-days", str(days_left),
+         # A positive serial: LibreSSL (macOS) encodes one with the top bit set as negative.
+         "-set_serial", str(int.from_bytes(os.urandom(7), "big") + 1)],
         capture_output=True, text=True, check=True).stdout
     der = subprocess.run(["openssl", "x509", "-outform", "DER"], input=pem.encode(), capture_output=True, check=True).stdout
-    not_after = NOW + timedelta(days=days_left, hours=6)
+    # The inventory's dates come from the certificate itself, so they match what a server serves.
+    end = subprocess.run(["openssl", "x509", "-noout", "-enddate"], input=pem, capture_output=True, text=True,
+                         check=True).stdout.strip().split("=", 1)[1]
+    not_after = datetime.strptime(end.replace("  ", " "), "%b %d %H:%M:%S %Y %Z").replace(tzinfo=timezone.utc)
     summary = {"subject": f"CN={names[0]}", "issuer": ISSUER, "serial": os.urandom(9).hex(),
                "notBefore": iso(not_after - timedelta(days=90)), "notAfter": iso(not_after),
                "dnsNames": names, "sha256": hashlib.sha256(der).hexdigest()}
@@ -58,8 +64,8 @@ def main(out):
         hosts.append(h)
         return h
 
-    def cert(names, days_left, monitored=False, issued_days_ago=None, error=None):
-        pem, summary = certificate(names, days_left)
+    def cert(names, days_left, monitored=False, issued_days_ago=None, error=None, key_file="/dev/null"):
+        pem, summary = certificate(names, days_left, key_file)
         c = {"id": ident(), "name": names[0], "domains": names, "keyAlgorithm": "ECDSA P-256", "autoRenew": True,
              "current": summary, "leafPEM": pem, "chainPEM": ""}
         if monitored:
@@ -102,7 +108,14 @@ def main(out):
     c_dns = cert(["pihole.example.com"], 58)
     c_kvm = cert(["kvm.example.com"], 61)
     c_uos = cert(["unifi.example.com"], 47, monitored=True)
-    c_ck = cert(["certkeeper.example.com"], 83)
+    # The demo server serves this one itself, as if picked in Settings › Web interface HTTPS.
+    tls = os.path.join(out, "tls")
+    os.makedirs(tls, exist_ok=True)
+    c_ck = cert(["certkeeper.example.com"], 83, key_file=os.path.join(tls, "privkey.pem"))
+    with open(os.path.join(tls, "fullchain.pem"), "w") as f:
+        f.write(c_ck["leafPEM"])
+    with open(os.path.join(out, "server.json"), "w") as f:
+        json.dump({"serverCertificateID": c_ck["id"]}, f)
 
     deploy(c_nas, nas, "truenas", certPath="ui", options={"truenas_ui": "true"})
     deploy(c_nas, nas, "containerApp", certPath="/mnt/tank/apps/jellyfin/config/nas.example.com.p12",

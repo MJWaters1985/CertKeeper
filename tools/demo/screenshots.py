@@ -7,13 +7,14 @@ import sys
 
 from playwright.sync_api import sync_playwright
 
-BASE = os.environ.get("CERTKEEPER_URL", "https://host.docker.internal:18450")
+BASE = os.environ.get("CERTKEEPER_URL", "https://certkeeper.example.com:18450")
 OUT = sys.argv[1] if len(sys.argv) > 1 else "/out"
 
 
 def main():
     with sync_playwright() as p:
-        browser = p.chromium.launch()
+        # The demo server answers as certkeeper.example.com, the name on its certificate.
+        browser = p.chromium.launch(args=["--host-resolver-rules=MAP certkeeper.example.com host.docker.internal"])
         page = browser.new_page(viewport={"width": 1360, "height": 860}, device_scale_factor=2,
                                 ignore_https_errors=True, color_scheme="dark")
         page.goto(BASE + "/")
@@ -40,6 +41,8 @@ def main():
         shot("2-certificate.png", f"#/certificate/{cert['certificate']['id']}")
         shot("3-host.png", f"#/host/{host['host']['id']}")
         shot("4-activity.png", "#/activity")
+        own = next(c for c in state["certificates"] if c["certificate"]["name"] == "certkeeper.example.com")
+        shot("6-own-certificate.png", f"#/certificate/{own['certificate']['id']}")
 
         page.set_viewport_size({"width": 390, "height": 844})
         shot("5-phone.png", "#/overview")

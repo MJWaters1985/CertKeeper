@@ -59,3 +59,19 @@ import X509
         #expect(tls.status?.mode == .selfSigned)
     }
 }
+
+@Suite struct ServerTLSStartupTests {
+    @Test func unusableManagedFilesFallBackToSelfSignedInsteadOfFailing() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ck-server-\(UUID().uuidString)")
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let config = try ServerConfig(environment: ["CERTKEEPER_CONFIG_DIR": dir.path])
+        try FileManager.default.createDirectory(at: config.tlsDirectory, withIntermediateDirectories: true)
+        try "not a certificate".write(to: config.tlsDirectory.appendingPathComponent("fullchain.pem"), atomically: true, encoding: .utf8)
+        try "not a key".write(to: config.tlsDirectory.appendingPathComponent("privkey.pem"), atomically: true, encoding: .utf8)
+
+        let tls = try ServerTLS(config: config)
+        #expect(tls.status?.mode == .selfSigned, "still starts, on the self-signed certificate")
+        #expect(tls.startupProblem?.contains("fullchain.pem") == true, "and says which file was the problem")
+        #expect(try tls.reload() == false, "the bad files aren't retried until they change")
+    }
+}
