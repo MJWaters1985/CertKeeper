@@ -115,6 +115,7 @@ table { width: 100%; border-collapse: collapse; }
 th, td { text-align: left; padding: 8px 12px; border-top: 1px solid var(--border); vertical-align: top; }
 th { border-top: none; font-size: 12px; color: var(--muted); font-weight: 600; }
 td.wrap { overflow-wrap: anywhere; }
+td.nowrap { white-space: nowrap; }
 .table-scroll { overflow-x: auto; }
 
 /* Badges and dots */
@@ -203,4 +204,5 @@ input:focus, select:focus, textarea:focus, button:focus-visible { outline: 2px s
   .form-grid { grid-template-columns: 1fr; }
   .item { flex-direction: column; }
   .item .actions { justify-content: flex-start; }
+  .wide-only { display: none; }
 }

@@ -14,6 +14,9 @@ struct ServerConfig: Sendable {
     var tlsKeyFile: String?
     /// Key for the secrets file. When unset, a random key is kept in `secrets.key` next to it.
     var secretKey: String?
+    /// Run rotation passes on the schedule. CERTKEEPER_SCHEDULE=off is for demos and tests, where
+    /// the hosts in the inventory don't exist.
+    var schedule = true
 
     static let defaultPort = 8443
 
@@ -33,6 +36,11 @@ struct ServerConfig: Sendable {
             throw ConfigError("Set both CERTKEEPER_TLS_CERT and CERTKEEPER_TLS_KEY, or neither")
         }
         secretKey = env["CERTKEEPER_SECRET_KEY"].flatMap { $0.isEmpty ? nil : $0 }
+        switch env["CERTKEEPER_SCHEDULE"]?.lowercased() {
+        case nil, "", "on": schedule = true
+        case "off": schedule = false
+        case let other?: throw ConfigError("CERTKEEPER_SCHEDULE must be on or off, not \"\(other)\"")
+        }
     }
 
     var inventoryFile: URL { configDirectory.appendingPathComponent("inventory.json") }

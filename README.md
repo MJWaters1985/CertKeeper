@@ -1,13 +1,22 @@
 # CertKeeper
 
-A native macOS app (SwiftUI, macOS 15+) that issues Let's Encrypt certificates using Cloudflare
-DNS-01 validation and rotates them onto remote hosts over SSH. It keeps an inventory, so it only
-renews and redeploys when needed.
+CertKeeper issues Let's Encrypt certificates using Cloudflare DNS-01 validation and keeps them
+current on your servers and devices over SSH: nginx, Apache, Proxmox VE, TrueNAS and its apps,
+UniFi OS, OPNsense, Pi-hole and more. It keeps an inventory, so it only renews and redeploys when
+needed, and it confirms what each service actually serves.
 
 It comes in two editions that share one engine:
 
-* **The Mac app** (this README).
-* **A server** for Docker or TrueNAS, with a web interface: see [docs/server.md](docs/server.md).
+* **The server**, for Docker or TrueNAS, with a web interface:
+  `ghcr.io/mjwaters1985/certkeeper`. See [docs/server.md](docs/server.md).
+* **The Mac app** (SwiftUI, macOS 15+), described in the rest of this README.
+
+![The server's overview: certificates, how long each is valid, and where they're deployed](docs/screenshots/1-overview.png)
+
+More screenshots: [a certificate](docs/screenshots/2-certificate.png),
+[a host with discovered certificates](docs/screenshots/3-host.png),
+[activity](docs/screenshots/4-activity.png), [on a phone](docs/screenshots/5-phone.png).
+The demo data comes from `tools/demo/run.sh`.
 
 ## How it works
 

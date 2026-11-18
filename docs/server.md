@@ -57,6 +57,7 @@ code is printed. Nothing else is lost.
 | `CERTKEEPER_CONFIG_DIR` | `/config` | All state; also `HOME` |
 | `CERTKEEPER_TLS_CERT`, `CERTKEEPER_TLS_KEY` | | A certificate and key to serve, e.g. one TrueNAS manages. Set both or neither. |
 | `CERTKEEPER_SECRET_KEY` | | Key for the secrets file (see [Secrets](#secrets)) |
+| `CERTKEEPER_SCHEDULE` | `on` | `off` stops automatic rotation passes (for demos and tests) |
 
 ## What's in /config
 
@@ -69,6 +70,8 @@ code is printed. Nothing else is lost.
 | `server.json` | Which managed certificate the web interface uses |
 | `tls/` | The web interface's certificate: `fullchain.pem`/`privkey.pem` when managed, else `self-signed/` |
 | `.ssh/` | CertKeeper's SSH key and `known_hosts` (new host keys are trusted on first use) |
+
+Activity also goes to the container's log (in TrueNAS: the app's Logs).
 
 Back up the whole folder. Settings › Configuration can also export everything to one file, with
 the secrets encrypted by a password you choose.

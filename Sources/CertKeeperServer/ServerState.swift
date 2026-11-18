@@ -55,9 +55,9 @@ final class ServerState: @unchecked Sendable {
         Task { @MainActor in await operation(model) }
     }
 
+    /// Adds to the activity log, which the model also copies to standard output (see Server.run).
     @MainActor func log(_ level: LogEntry.Level, _ message: String) {
         model.log(level, message)
-        Self.print("\(level.rawValue): \(message)")
     }
 
     static func print(_ line: String) {

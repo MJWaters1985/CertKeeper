@@ -1,0 +1,97 @@
+name: Release
+
+# Pushing a tag like v1.0.0 checks the versions, runs the Linux tests, builds the image and checks it
+# starts, then publishes it to ghcr.io/<owner>/certkeeper and creates a GitHub release from that
+# version's CHANGELOG.md section.
+on:
+  push:
+    tags: ["v*.*.*"]
+
+permissions:
+  contents: write     # create the GitHub release
+  packages: write     # push to ghcr.io
+
+jobs:
+  release:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag matches the versions and the changelog
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          server=$(grep -m1 -o 'static let version = "[^"]*"' Sources/CertKeeperServer/Server.swift | cut -d'"' -f2)
+          mac=$(grep -m1 -o '<key>CFBundleShortVersionString</key><string>[^<]*' Support/Info.plist | sed 's/.*<string>//')
+          echo "tag $tag, server $server, Mac app $mac"
+          [ "$tag" = "$server" ] || { echo "::error::Tag v$tag doesn't match Server.version $server"; exit 1; }
+          [ "$tag" = "$mac" ] || { echo "::error::Tag v$tag doesn't match the Mac app's version $mac in Support/Info.plist"; exit 1; }
+          grep -q "^## $tag " CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $tag"; exit 1; }
+
+      - name: Test environment
+        run: docker build -t certkeeper-test -f docker/test.Dockerfile docker
+
+      - name: Swift tests (Linux)
+        run: |
+          mkdir -p .ci-build && chmod 777 .ci-build
+          docker run --rm --user 568:568 -e HOME=/tmp/home -v "$PWD":/src:ro -v "$PWD/.ci-build":/build -w /src \
+            certkeeper-test sh -c 'mkdir -p /tmp/home && swift test --scratch-path /build'
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build the image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: certkeeper:ci
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image starts and answers
+        run: |
+          docker run -d --name ck -p 127.0.0.1:8443:8443 certkeeper:ci
+          for i in $(seq 1 30); do curl -fsk https://127.0.0.1:8443/healthz && break; sleep 2; done
+          docker logs ck
+          curl -fsk https://127.0.0.1:8443/healthz
+          docker logs ck 2>&1 | grep -q "one-time setup code" || { echo "::error::no setup code in the log"; exit 1; }
+          docker logs ck 2>&1 | grep -q "Created the SSH key" || { echo "::error::no SSH key created"; exit 1; }
+          [ "$(docker inspect -f '{{.Config.User}}' ck)" = "568:568" ] || { echo "::error::image doesn't run as 568"; exit 1; }
+          docker stop ck
+
+      - name: Image names and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository_owner }}/certkeeper
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # TrueNAS runs on x86-64 only, so that's the one platform published.
+      - name: Publish
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          awk -v v="$tag" '$0 ~ "^## "v" " {on=1; next} /^## / {on=0} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" --title "CertKeeper $tag" --notes-file notes.md --verify-tag

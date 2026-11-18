@@ -188,9 +188,14 @@ public final class AppModel {
     static let maxLogEntries = 1000
 
     public func log(_ level: LogEntry.Level, _ message: String, detail: String? = nil) {
-        inventory.log.insert(LogEntry(level, message, detail: detail), at: 0)
+        let entry = LogEntry(level, message, detail: detail)
+        inventory.log.insert(entry, at: 0)
         pruneLog()
+        onLog?(entry)
     }
+
+    /// Called for every new log entry (the server copies them to its standard output).
+    @ObservationIgnored public var onLog: ((LogEntry) -> Void)?
 
     /// Drops entries older than the configured retention, and any beyond the hard cap.
     public func pruneLog(now: Date = Date()) {

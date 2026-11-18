@@ -6,7 +6,7 @@ import Logging
 import ServiceLifecycle
 
 enum Server {
-    static let version = "0.1.0"
+    static let version = "1.0.0"
 
     static func run(_ config: ServerConfig) async throws {
         SSHRunner.ignoreSIGPIPE()
@@ -34,8 +34,18 @@ enum Server {
         let tls = try ServerTLS(config: config)
         let state = ServerState(config: config, model: model, auth: auth, tls: tls,
                                 sshPublicKey: SSHKeys.ensure(config), secretsKeySource: keySource)
+        await MainActor.run {
+            // Activity goes to standard output too, so it shows in the container's (TrueNAS app's) logs.
+            model.onLog = { entry in
+                ServerState.print("\(entry.level.rawValue): \(entry.message)" + (entry.level == .error ? (entry.detail.map { " — " + $0 } ?? "") : ""))
+            }
+        }
         await state.syncServerCertificate()
-        await MainActor.run { model.startScheduler() }
+        if config.schedule {
+            await MainActor.run { model.startScheduler() }
+        } else {
+            ServerState.print("warning: CERTKEEPER_SCHEDULE=off: no automatic rotation passes")
+        }
 
         if let code = auth.setupCode {
             ServerState.print("""

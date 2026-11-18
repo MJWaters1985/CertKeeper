@@ -273,19 +273,20 @@ function renderOverview() {
       ? h('div', { class: 'panel empty' }, 'No certificates yet. ',
           h('button', { class: 'link', text: 'Create one', onclick: () => certModal() }), ' or add a host and discover what it serves.')
       : h('div', { class: 'panel table-scroll' }, h('table', {},
-          h('thead', {}, h('tr', {}, ['Certificate', 'Names', 'Expires', 'Valid for', 'Status', 'Deployed'].map(t => h('th', { text: t })))),
+          h('thead', {}, h('tr', {}, [['Certificate'], ['Names', 'wide-only'], ['Expires', 'wide-only'], ['Valid for'], ['Status', 'wide-only'], ['Deployed']]
+            .map(([t, cls]) => h('th', { text: t, class: cls })))),
           h('tbody', {}, sorted.map(c => {
             const cert = c.certificate, deps = st.deployments.filter(d => d.deployment.certificateID === cert.id && d.state.kind !== 'disabled');
             const ok = deps.filter(d => ['current', 'watching'].includes(d.state.kind)).length;
             const days = cert.current ? Math.floor((new Date(cert.current.notAfter) - Date.now()) / 86400000) : null;
             return h('tr', {},
               h('td', {}, h('a', { href: `#/certificate/${cert.id}`, text: cert.name })),
-              h('td', { class: 'wrap', text: cert.domains.join(', ') }),
-              h('td', { text: fmtDay(cert.current?.notAfter) }),
+              h('td', { class: 'wrap wide-only', text: cert.domains.join(', ') }),
+              h('td', { class: 'nowrap wide-only', text: fmtDay(cert.current?.notAfter) }),
               h('td', {}, days === null ? '—' : h('span', { class: 'badge ' + (days < 0 ? 'red' : days <= c.renewalWindow ? 'orange' : 'green'),
                 text: days < 0 ? 'Expired' : `${days} days` })),
-              h('td', {}, cert.external ? h('span', { class: 'badge purple', text: 'Monitored' }) : h('span', { class: 'badge blue', text: 'Managed' })),
-              h('td', { text: deps.length ? `${ok}/${deps.length} current` : '—' }));
+              h('td', { class: 'wide-only' }, cert.external ? h('span', { class: 'badge purple', text: 'Monitored' }) : h('span', { class: 'badge blue', text: 'Managed' })),
+              h('td', { class: 'nowrap', text: deps.length ? `${ok}/${deps.length} current` : '—' }));
           })))),
   ];
 }

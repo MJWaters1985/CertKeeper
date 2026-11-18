@@ -1,0 +1,46 @@
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      # Swift plus the tools the tests drive (openssl, python3, ssh); tests run as uid 568 like the app.
+      - name: Test environment
+        run: docker build -t certkeeper-test -f docker/test.Dockerfile docker
+
+      - uses: actions/cache@v4
+        with:
+          path: .ci-build
+          key: linux-build-${{ hashFiles('Package.resolved') }}
+          restore-keys: linux-build-
+
+      - name: Swift tests (Linux)
+        run: |
+          mkdir -p .ci-build && chmod 777 .ci-build
+          docker run --rm --user 568:568 -e HOME=/tmp/home -v "$PWD":/src:ro -v "$PWD/.ci-build":/build -w /src \
+            certkeeper-test sh -c 'mkdir -p /tmp/home && swift test --scratch-path /build'
+
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - run: swift --version
+      - name: Swift tests (macOS)
+        run: swift test
