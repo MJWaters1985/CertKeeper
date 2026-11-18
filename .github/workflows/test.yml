@@ -36,11 +36,12 @@ jobs:
           docker run --rm --user 568:568 -e HOME=/tmp/home -v "$PWD":/src:ro -v "$PWD/.ci-build":/build -w /src \
             certkeeper-test sh -c 'mkdir -p /tmp/home && swift test --scratch-path /build'
 
+  # CertKeeper ships for Linux only, but the engine also builds on macOS for development.
   macos:
     runs-on: macos-latest
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
       - run: swift --version
-      - name: Swift tests (macOS)
+      - name: Swift tests (macOS, for development)
         run: swift test

@@ -18,14 +18,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Tag matches the versions and the changelog
+      - name: Tag matches the version and the changelog
         run: |
           tag="${GITHUB_REF_NAME#v}"
           server=$(grep -m1 -o 'static let version = "[^"]*"' Sources/CertKeeperServer/Server.swift | cut -d'"' -f2)
-          mac=$(grep -m1 -o '<key>CFBundleShortVersionString</key><string>[^<]*' Support/Info.plist | sed 's/.*<string>//')
-          echo "tag $tag, server $server, Mac app $mac"
+          echo "tag $tag, server $server"
           [ "$tag" = "$server" ] || { echo "::error::Tag v$tag doesn't match Server.version $server"; exit 1; }
-          [ "$tag" = "$mac" ] || { echo "::error::Tag v$tag doesn't match the Mac app's version $mac in Support/Info.plist"; exit 1; }
           grep -q "^## $tag " CHANGELOG.md || { echo "::error::CHANGELOG.md has no section for $tag"; exit 1; }
 
       - name: Test environment

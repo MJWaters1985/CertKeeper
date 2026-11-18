@@ -4,10 +4,10 @@ import PackageDescription
 /// SwiftNIO carries TLS connections where Network.framework doesn't exist (the Linux server).
 let linuxOnly = TargetDependencyCondition.when(platforms: [.linux])
 
-var products: [Product] = [
+let products: [Product] = [
     .executable(name: "certkeeper-server", targets: ["CertKeeperServer"]),
 ]
-var targets: [Target] = [
+let targets: [Target] = [
     .target(
         name: "CertKeeperCore",
         dependencies: [
@@ -53,17 +53,6 @@ var targets: [Target] = [
     ),
 ]
 
-#if os(macOS)
-// The SwiftUI app only builds on macOS.
-products.append(.executable(name: "CertKeeper", targets: ["CertKeeper"]))
-targets.append(
-    .executableTarget(
-        name: "CertKeeper",
-        dependencies: ["CertKeeperCore"],
-        swiftSettings: [.swiftLanguageMode(.v5)]
-    )
-)
-#endif
 
 let package = Package(
     name: "CertKeeper",
