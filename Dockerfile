@@ -42,7 +42,7 @@ RUN apt-get update \
  && useradd -u 568 -g 568 -d /config -M -s /usr/sbin/nologin apps \
  && mkdir -p /config && chown 568:568 /config
 COPY --from=build /out/ /app/
-COPY LICENSE NOTICE /app/
+COPY LICENSE NOTICE THIRD_PARTY_NOTICES.md /app/
 
 # All state lives in /config, which is also HOME so ssh keeps its key and known_hosts there.
 ENV HOME=/config \

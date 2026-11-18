@@ -1,198 +1,211 @@
 # CertKeeper
 
-CertKeeper issues Let's Encrypt certificates using Cloudflare DNS-01 validation and keeps them
-current on your servers and devices over SSH: nginx, Apache, Proxmox VE, TrueNAS and its apps,
-UniFi OS, OPNsense, Pi-hole and more. It keeps an inventory, so it only renews and redeploys when
-needed, and it confirms what each service actually serves.
+CertKeeper issues Let's Encrypt certificates using Cloudflare DNS-01 validation and keeps them current on
+your servers and devices over SSH: nginx, Apache, Proxmox VE, TrueNAS and its apps, UniFi OS, OPNsense,
+Pi-hole and more. It keeps an inventory, so it only renews and redeploys when needed, and it checks what
+each service actually serves.
 
-It comes in two editions that share one engine:
+It runs as a container with a web interface, on TrueNAS or any Docker host:
+`ghcr.io/mjwaters1985/certkeeper`.
 
-* **The server**, for Docker or TrueNAS, with a web interface:
-  `ghcr.io/mjwaters1985/certkeeper`. See [docs/server.md](docs/server.md).
-* **The Mac app** (SwiftUI, macOS 15+), described in the rest of this README.
-
-![The server's overview: certificates, how long each is valid, and where they're deployed](docs/screenshots/1-overview.png)
+![The overview: certificates, how long each is valid, and where they're deployed](docs/screenshots/1-overview.png)
 
 More screenshots: [a certificate](docs/screenshots/2-certificate.png),
 [a host with discovered certificates](docs/screenshots/3-host.png),
 [activity](docs/screenshots/4-activity.png), [its own HTTPS certificate](docs/screenshots/6-own-certificate.png),
-[on a phone](docs/screenshots/5-phone.png).
-The demo data comes from `tools/demo/run.sh`.
+[on a phone](docs/screenshots/5-phone.png). They show demo data from `tools/demo/run.sh`.
+
+## Documentation
+
+* **[Installing and running CertKeeper](docs/server.md)**: TrueNAS and Docker, first start, HTTPS for
+  the web interface, its own address and port 443 on TrueNAS, backups, updates and troubleshooting.
+* **[The Cloudflare API token](docs/cloudflare-token.md)**: the permissions it needs and how to create it.
+* The rest of this page: how CertKeeper works and what it supports.
 
 ## How it works
 
 ```
-Mac (CertKeeper)                                      Hosts
- ├─ ACME client ──► Let's Encrypt                      nginx · Apache · Proxmox VE
- ├─ Cloudflare API ─► _acme-challenge TXT records      TrueNAS · UniFi OS · OPNsense
- └─ /usr/bin/ssh ──────────────────────────────────►   install script per target
+CertKeeper (container)                                 Hosts
+ ├─ ACME client ──► Let's Encrypt                       nginx · Apache · Proxmox VE · TrueNAS
+ ├─ Cloudflare API ──► _acme-challenge TXT records      UniFi OS · OPNsense · Pi-hole · apps
+ └─ ssh ────────────────────────────────────────────►   install script per target
 ```
 
-* **Issuance happens on the Mac.** Hosts never see the Cloudflare token and don't need an ACME client installed.
-* **Secrets stay in the login Keychain**: the Cloudflare token, the ACME account key, and each certificate's private key.
-  The inventory (hosts, certificates, deployments, log) is `~/Library/Application Support/CertKeeper/inventory.json`.
-* **SSH uses the system OpenSSH client**, so `~/.ssh/config`, ssh-agent, the 1Password/Secretive agents and hardware
-  keys all work. Connections are multiplexed. New host keys are trusted on first use.
-* **Passwords (optional, per host)** are stored in the Keychain. Keys are always tried first.
-  * *SSH login:* ssh runs the CertKeeper binary as its `SSH_ASKPASS` helper, and it reads the password from the
-    Keychain. The password never appears in arguments or environment variables, and only "password" prompts are
-    answered (never key passphrases).
-  * *sudo:* CertKeeper first checks `sudo -n`. Only if that fails does it run `sudo -k -S` with the password on the
-    first stdin line, so a password can never reach the shell as a command.
-* **Rotation pass** (runs every N hours, or from ⇧⌘R / the menu bar):
-  1. A certificate is (re)issued when it has never been issued, is within its renewal window (default 30 days),
-     has expired, or its domain list has changed.
-  2. Every deployment is checked: the app reads the certificate the host is actually using, plus the live TLS
-     endpoint if one is configured, and compares SHA-256 fingerprints.
-  3. Any deployment that isn't serving the current certificate gets redeployed.
+* **Issuing happens in CertKeeper.** Hosts never see the Cloudflare token and don't need an ACME client.
+* **Secrets are stored encrypted**: the Cloudflare token, the ACME account key, each certificate's private
+  key and host passwords, in an AES-GCM file (see [Secrets](docs/server.md#secrets)).
+* **SSH uses OpenSSH** with CertKeeper's own key, which it creates on first start, and/or a stored
+  password per host. Keys are tried first. Connections are reused for a minute. A host's key is trusted the
+  first time CertKeeper connects and checked after that.
+  * *Password login:* ssh runs CertKeeper's own binary as its `SSH_ASKPASS` helper. The password reaches it
+    only through that ssh process's environment, never as an argument or over the network, and only
+    password prompts are answered (never key passphrases or host-key questions).
+  * *sudo:* CertKeeper first tries `sudo -n`. Only if that fails does it run `sudo -k -S` with the password
+    on the first line of input, so the password can never reach the shell as a command.
+* **The rotation pass** runs every 12 hours (Settings › Let's Encrypt), or when you choose
+  **Run rotation pass**:
+  1. A certificate is issued or renewed when it has never been issued, is within its renewal window
+     (30 days before expiry by default), has expired, or its list of names has changed.
+  2. Every deployment is checked: CertKeeper reads the certificate the service is actually using, from the
+     host and from its TLS endpoint if one is set, and compares SHA-256 fingerprints. It also checks that
+     the endpoint sends the full chain.
+  3. Any deployment that isn't serving the current certificate is redeployed.
 
 ## Targets
 
-| Target | What the default script does |
+| Target | What the built-in script does |
 |---|---|
-| nginx | Backs up and replaces the cert/key files, runs `nginx -t` (rolling back on failure), then reloads |
-| Apache | Same as nginx, using `apachectl -t` and a graceful reload. Full chain goes in `SSLCertificateFile` unless a chain path is set |
-| Proxmox VE | `pvenode cert set … --force 1 --restart 1` (custom pveproxy cert; the cluster CA is untouched) |
-| TrueNAS | `midclt` import → web UI and/or catalog apps (see below) → deletes old copies nothing references → restarts the UI |
-| Pi-hole (v6) | Writes key + full chain into FTL's TLS file (`webserver.tls.cert`, default `/etc/pihole/tls.pem`), optionally sets `webserver.domain` to the certificate's name, then restarts `pihole-FTL` (or the Docker container) |
-| App (cert files) | For apps that read their own certificate files (qBittorrent, Jellyfin, Compose stacks…). Writes the files (optionally `chown`ed, e.g. `568:568`), then redeploys the TrueNAS app or restarts the container / Compose project, or runs your reload command |
-| UniFi OS | Replaces `unifi-core.crt/.key` (auto-detected) → restarts `unifi-core` |
-| OPNsense | PHP: imports into System › Trust (reusing the previous CertKeeper entry) → sets the web GUI cert → `configctl webgui restart` |
-| Device (HTTPS API) | For devices without SSH (hosts with connection *Device API*). `PUT /api/tls/certificate` with the full chain and key, authenticated by the device's API token; the device checks the pair and switches its HTTPS server over |
+| nginx | Backs up and replaces the certificate and key files, runs `nginx -t` (rolling back on failure), then reloads. A separate nginx instance (its own `-c`/`-p`, such as a KVM's web UI) is tested and reloaded on its own |
+| Apache | Same as nginx, using `apachectl -t` and a graceful reload. The full chain goes in `SSLCertificateFile` unless a chain path is set |
+| Proxmox VE | `pvenode cert set … --force 1 --restart 1` (the custom pveproxy certificate; the cluster CA is untouched) |
+| TrueNAS | Imports through `midclt`, then sets it for the web UI and/or catalog apps (see below), deletes old copies nothing uses, and restarts the UI |
+| Pi-hole (v6) | Writes the key and full chain into FTL's TLS file (`webserver.tls.cert`, default `/etc/pihole/tls.pem`), optionally sets `webserver.domain` to the certificate's name, then restarts `pihole-FTL` (or its Docker container) |
+| App (cert files) | For apps that read their own certificate files (qBittorrent, Jellyfin, Compose stacks…). Writes PEM files or a PKCS#12 file (optionally `chown`ed, e.g. to `568:568`), then redeploys the TrueNAS app, restarts the container, Compose project or systemd unit, or runs your reload command |
+| UniFi OS | Replaces `unifi-core.crt` and `.key` (found automatically) and restarts `unifi-core` |
+| OPNsense | Imports into System › Trust (reusing the previous CertKeeper entry), sets it as the web GUI certificate and runs `configctl webgui restart` |
+| Device (HTTPS API) | For devices without SSH (hosts with the *Device API* connection; see below) |
 | Custom | Your own script |
 
-Every script can be viewed and overridden per deployment (*Customize install script*). The scripts get
-`$CERT $CHAIN $FULLCHAIN $KEY $TARGET_CERT $TARGET_KEY $TARGET_CHAIN $CERT_NAME $DOMAINS` and the helpers
-`ck_install` (backs up, keeps the 3 newest backups) and `ck_rollback`.
+Every deployment's script can be replaced with your own (*Customize install script*). Scripts run with
+`sh` on the host and get these variables:
+
+| Variable | |
+|---|---|
+| `$CERT`, `$CHAIN`, `$FULLCHAIN`, `$KEY` | Temporary files with the new certificate, its chain, both together, and the private key |
+| `$TARGET_CERT`, `$TARGET_KEY`, `$TARGET_CHAIN` | The paths set on the deployment |
+| `$DOMAINS` | The certificate's names, separated by spaces |
+| `$CERT_NAME`, `$CERT_SLUG` | A unique label for this copy (for example `certkeeper_www_example_com_20260109120000`) and its stable part |
+| `$STAMP` | A timestamp, used in backup names |
+| `$CK_OPT_*` | The deployment's options, such as `$CK_OPT_RESTART_TARGET` |
+
+and these helpers: `ck_install SRC DST MODE` (backs up `DST`, keeping the three newest backups, then
+replaces its contents), `ck_rollback` (restores what `ck_install` replaced) and `ck_have COMMAND`.
 
 ### TrueNAS apps
 
 TrueNAS can't replace an imported certificate in place, so every renewal creates a new certificate entry.
 
-* **Catalog apps** (apps with a *Certificate* setting, TrueNAS 24.10+). One TrueNAS deployment can cover the web UI
-  and any number of apps. On each deploy:
-  1. Apps still using an older CertKeeper copy of the certificate are repointed automatically, along with any apps
-     listed in *Catalog apps*. They're updated through `app.update`, which redeploys them.
-  2. Old copies are deleted only if neither the UI nor any app still references them. A failed app update leaves that
-     app's certificate in place and marks the deploy as failed.
-  3. Discovery lists each app's certificate. Adopting an app adds it to the existing TrueNAS deployment for that certificate.
-* **Apps that handle HTTPS themselves** (no TrueNAS certificate setting) use *App (cert files)*. Discovery finds
-  **Jellyfin** (`network.xml` → a PKCS#12 `.pfx`) and **qBittorrent** (`qBittorrent.conf` → PEM cert and key) by
-  looking in the app's config volumes. It maps the paths inside the container to real paths on the NAS, and picks up
-  the file format, restart target and HTTPS port, so adopting needs no manual setup. Reading those volumes usually
-  needs *Use sudo* on the host. For other apps or Compose stacks, enter the paths yourself.
+* **Catalog apps** (apps with a *Certificate* setting, TrueNAS 24.10 and later). One TrueNAS deployment can
+  cover the web UI and any number of apps. On each deploy:
+  1. Apps still using an older CertKeeper copy of the certificate are switched to the new one, along with
+     any apps listed in *Catalog apps*. They're updated with `app.update`, which redeploys them.
+  2. Old copies are deleted only when neither the web UI nor any app still uses them. A failed app update
+     leaves that app's certificate in place and marks the deploy as failed.
+  3. Discovery lists each app's certificate. Adopting one adds the app to the existing TrueNAS deployment
+     for that certificate.
+* **Apps that handle HTTPS themselves** (no TrueNAS certificate setting) use *App (cert files)*. Discovery
+  finds **Jellyfin** (`network.xml`, a PKCS#12 file) and **qBittorrent** (`qBittorrent.conf`, PEM files) in
+  the app's config volumes. It maps the paths inside the container to real paths on the NAS and picks up
+  the file format, restart target and HTTPS port, so adopting needs no manual setup. Reading those volumes
+  usually needs *Use sudo* on the host. For other apps or Compose stacks, enter the paths yourself.
 
-**Discovery** (Host › Discover) scans for nginx (`nginx -T`; skipped on TrueNAS), Apache vhosts, qBittorrent
-(native `qbittorrent-nox` — by process, `--profile` or home folder, restarted through its systemd unit — or Docker), Pi-hole v6
-(native, or Docker containers running a `pihole` image, mapped to the host volume), the Proxmox pveproxy cert, the TrueNAS UI
-cert, UniFi `unifi-core.crt`, and the OPNsense web GUI cert. *Adopt* turns a discovered certificate into a managed one,
-reusing an existing managed certificate when the names match.
+### Discovery
+
+**Discover** on a host looks for:
+
+* every running **nginx** (each instance with its own `-c`/`-p`; skipped on TrueNAS, whose nginx is the web UI),
+* **Apache** virtual hosts,
+* **Pi-hole** v6, native or in Docker (mapped to the host volume),
+* **qBittorrent**, native `qbittorrent-nox` (by process, `--profile` or home folder, restarted through its
+  systemd unit) or in Docker,
+* the **Proxmox VE** pveproxy certificate,
+* **TrueNAS**: the web UI's certificate, catalog apps, and apps that serve HTTPS themselves,
+* **UniFi OS** consoles and UniFi OS Server,
+* the **OPNsense** web GUI certificate,
+* **any other TLS service**: for each listening port, it reads the certificate the port serves and finds the
+  file that holds it (under `/etc`, `/opt`, `/srv`, `/var/lib`, `/usr/local/etc` and `/home`), with its
+  private key and systemd unit. This needs `openssl` and `ss` or `netstat` on the host, and is skipped on
+  TrueNAS and OPNsense.
+
+For **Device API** hosts, discovery asks the device's API what it serves.
+
+*Adopt* turns a discovered certificate into a managed one: it reuses a managed certificate that covers the
+same names, or creates a new one. It can also adopt a certificate as **monitor only**, for one that another
+system renews (UniFi's own ACME client, for example): CertKeeper then only watches its expiry and chain.
 
 ### Device API hosts
 
-Some devices, such as an ESP32-S3 board running firmware with this API, have no shell. They install certificates
-through a small HTTPS API instead:
+Some devices, such as an ESP32 board running firmware with this API, have no shell. They install
+certificates through a small HTTPS API instead:
 
-* `GET /api/tls` returns the certificate being served: `source` (`installed` or `self-signed`), subject, issuer,
-  `not_after`, `sha256` (of the leaf DER), `dns_names` and `chain_length`.
+* `GET /api/tls` returns the certificate being served: `source` (`installed` or `self-signed`), subject,
+  issuer, `not_after`, `sha256` (of the leaf certificate's DER), `dns_names` and `chain_length`.
 * `PUT /api/tls/certificate` takes JSON `{"certificate": "<PEM chain, leaf first>", "private_key": "<PEM>"}`.
-* Both need `Authorization: Bearer <token>`. CertKeeper keeps the token in the Keychain as the host's password.
+* Both need `Authorization: Bearer <token>`. CertKeeper stores the token as the host's password.
 
-Until a publicly trusted certificate is installed, the device serves a self-signed one. CertKeeper sends the token
-and private keys only to a certificate macOS trusts for the host's name, or to the one whose SHA-256 is pinned on
-the host. The host editor's **Fetch** button reads the fingerprint; pin it only if it matches the one the device
-shows. Requests use Network.framework rather than URLSession, because App Transport Security makes URLSession
-refuse untrusted certificates even when the app has chosen to trust them. Self-signed certificates also have to
-meet Apple's TLS rules (serverAuth EKU, valid for 825 days or less), or macOS rejects them outright.
-
-## Setup
-
-```sh
-./build-app.sh            # → build/CertKeeper.app
-open build/CertKeeper.app
-```
-
-**Signing (do this once).** Keychain remembers "Always Allow" by Apple team ID only for apps signed with an
-Apple-issued certificate. Ad-hoc and self-signed builds are remembered by their exact build hash, so after every
-rebuild Keychain asks again, once per stored secret. To stop that, create a free **Apple Development** certificate:
-
-1. Xcode › Settings › Accounts › **+** › Apple ID (a free account is enough).
-2. Select your team › **Manage Certificates…** › **+** › **Apple Development**.
-
-`build-app.sh` picks it up automatically (or pass any identity: `./build-app.sh "Developer ID Application: …"`).
-The first launch after switching asks once per item — choose **Always Allow** — and rebuilds keep access after that.
-
-1. **Settings › Cloudflare**: add a scoped API token with *Zone › Zone › Read* and *Zone › DNS › Edit*, then click **Verify**.
-2. **Settings › Let's Encrypt**: enter an email and accept the Subscriber Agreement. Leave it on **Staging** until a full
-   issue → deploy → verify cycle works, then switch to Production.
-3. Add hosts. Use key-based SSH or a stored password, as root or as a user with sudo (enable *Use sudo*).
-4. Run **Discover** on each host and adopt what it finds, or create certificates and add deployments manually.
+Until a publicly trusted certificate is installed, the device serves a self-signed one. CertKeeper sends the
+token and private keys only to a certificate that chains to a trusted root (the container's CA bundle) and
+is valid for the host's name or address, or to the one whose SHA-256 is pinned on the host. **Fetch** in the
+host editor reads the fingerprint the device presents now; pin it only if it matches the one the device
+itself shows.
 
 ## Exporting certificates
 
-**Export…** on a certificate writes it with its full chain in a choice of formats. Private keys are written
-readable only by you, and you're asked before existing files are replaced. The last format used is remembered.
+**Export…** on a certificate downloads it with its full chain:
 
 | Format | Files | Typical use |
 |---|---|---|
 | PEM, separate files | `NAME.cert.pem`, `.chain.pem`, `.fullchain.pem`, `.privkey.pem` | nginx, Apache, most Linux tools |
 | PEM, single file | `NAME.pem` (private key, then full chain) | HAProxy, Pi-hole, lighttpd |
-| PKCS#12 | `NAME.p12` (full chain + key, password protected; AES-256, or 3DES for older systems) | Windows/IIS, macOS Keychain, Java, Jellyfin |
-| PKCS#7 + key | `NAME.p7b` (full chain) + `NAME.key` (PEM) | Windows, Java |
+| PKCS#12 | `NAME.p12` (full chain and key, password protected; AES-256, or 3DES and SHA-1 for older systems) | Windows/IIS, macOS Keychain, Java, Jellyfin |
+| PKCS#7 + key | `NAME.p7b` (full chain) and `NAME.key` (PEM) | Windows, Java |
 | DER + key | `NAME.cer`, `NAME.chain-N.cer`, `NAME.key.der` (PKCS#8) | Windows, appliances, Android |
 
-PKCS#12 and PKCS#7 are produced with macOS's `/usr/bin/openssl`, in a private temporary folder.
+Every format includes the private key, so keep the files safe. PKCS#12 and PKCS#7 files are made with the
+container's `openssl`, in a private temporary folder.
 
 ## Exporting and importing the configuration
 
-**File › Export Configuration…** (⇧⌘E) saves hosts, certificates, deployments, settings and ACME account links to
-a JSON file; the activity log isn't included. Secrets (Cloudflare token, ACME account key, certificate private keys,
-host passwords, .pfx passwords) are only included if you tick the box. They're then encrypted with a password you
-choose: PBKDF2-SHA256 with 600,000 iterations, then AES-256-GCM. Without them the file contains no passwords or keys.
+**Settings › Configuration › Export** downloads hosts, certificates, deployments, settings and ACME account
+links as a JSON file; the activity log isn't included. With a password (at least 10 characters), the file
+also holds the secrets (the Cloudflare token, ACME account key, certificate private keys, host passwords
+and PKCS#12 passwords), encrypted with PBKDF2-SHA256 (600,000 iterations) and AES-256-GCM. Without one it
+holds no passwords or keys.
 
-**File › Import Configuration…** (⇧⌘I) shows what the file contains and asks before replacing the current
-configuration. The current inventory is first saved to `inventory.before-import-<time>.json` next to it, and the
-activity log is kept. Secrets in the file go to the Keychain. After import, the log lists certificates without a
-private key (reissue them before deploying) and hosts without a password.
-
-## App icon
-
-`Support/Icons/CertKeeper.icon` is a layered Icon Composer icon: a certificate behind a gold seal and ribbons, on a
-teal gradient. Its layers are flat, full-bleed SVGs with no baked-in shadows or gloss; macOS 26+ applies the
-rounded-square mask, Liquid Glass, depth and shadow itself. `build-app.sh` compiles it with `actool` into
-`Assets.car`, plus a flattened `CertKeeper.icns` for older macOS. To change it, edit `certificate_layers()` in
-`Support/Icons/make_icons.py` and run `python3 make_icons.py --icon`, or open the `.icon` in Icon Composer
-(Xcode › Open Developer Tool). The other concepts and their previews are kept in the same folder.
+**Import** shows what the file contains and asks before replacing the current configuration. The current
+inventory is first saved to `inventory.before-import-<time>.json` in `/config`, and the activity log is kept.
+The log then lists any certificates without a private key (issue them again before deploying) and hosts
+without a password.
 
 ## Tests
 
 ```sh
-swift test                                           # unit tests, plus running the real deploy and discovery scripts against stubs
+swift test       # macOS or Linux: unit tests, plus the real install and discovery scripts run against stubs
+
+# The Linux tests as CI runs them, in a container with the tools the scripts use:
+docker build -t certkeeper-test -f docker/test.Dockerfile docker
+docker run --rm --user 568:568 -e HOME=/tmp/home -v "$PWD":/src:ro -w /src certkeeper-test \
+  sh -c 'mkdir -p /tmp/home && swift test --scratch-path /tmp/build'
+
 CK_ACME_STAGING=1 swift test --filter ACMEStaging    # live check against Let's Encrypt staging (no DNS changes)
 ```
 
-## Caveats: verify these on your versions before trusting production
+## Caveats: check these on your versions
 
-* **UniFi OS Server** (self-hosted, podman-based) has no documented certificate path. The script searches
-  `/data /mnt /var/lib /opt /srv` for `unifi-core.crt` and tries `systemctl`, `unifi-os`, then `podman exec uosserver`.
-  Set `UNIFI_DIR` in the script if detection gets it wrong. Firmware updates on UniFi consoles can overwrite the certificate;
-  the next rotation pass will detect the drift and redeploy.
-* **OPNsense**: the script edits the legacy `$config` array and calls `write_config()`. This matches how the Trust store has
-  traditionally been stored, but newer releases are moving Trust to MVC models, so test on your version. A backup of
-  `/conf/config.xml` is taken first, and OPNsense also keeps its own config history. Root's login shell on OPNsense is the
-  console menu; non-interactive `ssh … sh -s` normally passes through it, but a dedicated admin user with sudo is more robust.
-* **TrueNAS**: uses `midclt` (`certificate.create` with `CERTIFICATE_CREATE_IMPORTED`, plus `app.query` with
-  `retrieve_config` and `app.update`). This was written for SCALE / Community Edition 24.10+, not CORE, and is tested
-  against a simulated middleware rather than a real system. App updates send back the app's full config with only the
-  `certificate_id` fields changed.
-* The app has to be running for scheduled rotation. It stays in the menu bar, and *Open at login* is in Settings › Schedule.
+* **UniFi OS Server** (self-hosted, podman-based) has no documented certificate path. CertKeeper looks for
+  `unifi-core.crt` in its podman volumes and under `/data`, `/mnt`, `/var/lib`, `/opt` and `/srv`. Set the
+  folder on the deployment (*unifi-core folder*) if it picks the wrong one. It restarts `unifi-core` inside
+  the `uosserver` container, or the whole `uosserver` service if that fails. UniFi OS Server also renews
+  its own Let's Encrypt certificate; to keep that, adopt it as monitor only. Firmware updates on UniFi
+  consoles can replace the certificate; the next rotation pass notices and redeploys.
+* **OPNsense**: the script edits the legacy `$config` array and calls `write_config()`. It's used on
+  OPNsense 26.7, but OPNsense is moving System › Trust to its MVC models, so test it on your version. It
+  backs up `/conf/config.xml` first, and OPNsense keeps its own configuration history too. Root's login shell
+  on OPNsense is the console menu; non-interactive `ssh … sh -s` passes through it, but a dedicated admin
+  user with sudo is more robust.
+* **TrueNAS**: uses `midclt` (`certificate.create` with `CERTIFICATE_CREATE_IMPORTED`, `app.query` with
+  `retrieve_config`, and `app.update`). It's used on TrueNAS Community Edition 26 and 27 and needs 24.10 or
+  later; TrueNAS CORE isn't supported. App updates send back each app's full configuration with only its
+  certificate setting changed.
 
 ## Support
 
 CertKeeper is a free, one-person project. Problems and ideas go in
-[GitHub issues](https://github.com/MJWaters1985/CertKeeper/issues). If it saves you time,
-you can [buy me a coffee](https://buymeacoffee.com/mjwaters1985).
+[GitHub issues](https://github.com/MJWaters1985/CertKeeper/issues); security problems go
+[privately](SECURITY.md). If it saves you time, you can [buy me a coffee](https://buymeacoffee.com/mjwaters1985).
 
 ## License
 
 Copyright 2026 Mike Waters. Licensed under the [Apache License, Version 2.0](LICENSE); see [NOTICE](NOTICE).
+CertKeeper is built on open-source software listed, with its licenses, in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

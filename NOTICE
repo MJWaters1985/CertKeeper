@@ -3,5 +3,7 @@ Copyright 2026 Mike Waters
 
 This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 
-It depends on swift-crypto, swift-certificates and swift-asn1 from the Swift
-Server Workgroup / Apple Inc., each licensed under the Apache License, Version 2.0.
+It includes software developed by others, among them SwiftNIO, swift-crypto,
+swift-certificates and Hummingbird (Apache License 2.0), BoringSSL, libcurl,
+zlib, ICU, musl and mimalloc. Their notices and license texts are in
+THIRD_PARTY_NOTICES.md.

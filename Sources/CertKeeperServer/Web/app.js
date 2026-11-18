@@ -513,7 +513,8 @@ function renderSettings() {
 
     h('h2', {}, 'Cloudflare'),
     h('div', { class: 'panel section-pad' },
-      field('API token', token, 'A token with Zone › DNS › Edit for the zones you issue certificates in. It’s stored encrypted.'),
+      field('API token', token, 'A token with Zone › Zone › Read and Zone › DNS › Edit for the zones you issue certificates in. It’s stored encrypted.'),
+      h('p', { class: 'help small' }, h('a', { href: 'https://github.com/MJWaters1985/CertKeeper/blob/main/docs/cloudflare-token.md', target: '_blank', rel: 'noopener', text: 'How to create the token' })),
       verifyOut,
       h('div', { class: 'form-actions' },
         st.hasCloudflareToken ? h('button', { class: 'danger', text: 'Remove', onclick: () =>

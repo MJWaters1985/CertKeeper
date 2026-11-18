@@ -85,7 +85,7 @@ public final class AppModel {
                 guard let value = inventory.deployments[i].options[key.rawValue] else { continue }
                 if !value.isEmpty {
                     do { try secrets.set(value, for: .deploymentSecret(inventory.deployments[i].id, key.rawValue)) }
-                    catch { log(.error, "Could not move a password into the Keychain", detail: error.localizedDescription); continue }
+                    catch { log(.error, "Could not move a password into the secret store", detail: error.localizedDescription); continue }
                     moved += 1
                 }
                 inventory.deployments[i].options[key.rawValue] = nil
@@ -95,7 +95,7 @@ public final class AppModel {
             inventory.hosts[i].lastDiscovery = inventory.hosts[i].lastDiscovery.map(stashSecrets)
             moved += 1
         }
-        if moved > 0 { log(.info, "Moved passwords from the inventory file into the Keychain") }
+        if moved > 0 { log(.info, "Moved passwords from the inventory file into the secret store") }
     }
 
     static func hasSecrets(_ ep: DiscoveredEndpoint) -> Bool {
@@ -503,7 +503,7 @@ public final class AppModel {
             let label = "\(cert.name) → \(host.name) (\(d.kind.displayName))"
             do {
                 guard let key = secrets.get(.certificateKey(cert.id)) else {
-                    throw DeployError("Private key for \(cert.name) is missing from the Keychain — reissue the certificate")
+                    throw DeployError("The private key for \(cert.name) is missing — issue the certificate again")
                 }
                 log(.info, "Deploying \(label)")
                 let detail: String
@@ -1028,7 +1028,7 @@ public final class AppModel {
             return issued.first { $0.id == id }?.name
         }
         if !missingKeys.isEmpty {
-            log(.error, "Private keys missing from the Keychain — these certificates can't be deployed until reissued",
+            log(.error, "Private keys are missing for these certificates; they can't be deployed until they're issued again",
                 detail: missingKeys.joined(separator: ", "))
         }
     }

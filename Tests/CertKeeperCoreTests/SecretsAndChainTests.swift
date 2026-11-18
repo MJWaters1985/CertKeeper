@@ -145,7 +145,7 @@ import X509
         try store.set(key, for: .certificateKey(withKey.id))
 
         await m.preflightSecrets()
-        let entry = try #require(m.inventory.log.first { $0.message.contains("Private keys missing") })
+        let entry = try #require(m.inventory.log.first { $0.message.contains("Private keys are missing") })
         #expect(entry.detail == "b.example.com", "only issued certificates whose key is gone")
     }
 
