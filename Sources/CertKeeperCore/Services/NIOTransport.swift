@@ -1,4 +1,3 @@
-#if !canImport(Network)
 import Foundation
 import NIOCore
 import NIOPosix
@@ -6,9 +5,7 @@ import NIOSSL
 import NIOTLS
 import X509
 
-// TLS connections for systems without Network.framework (the Linux server), on SwiftNIO and
-// BoringSSL. Each function matches its Network.framework counterpart in TLSProbe.swift and
-// DeviceAPI.swift.
+// TLS connections for the TLS probe and the device API, on SwiftNIO and BoringSSL.
 
 extension TLSProbe {
     /// The peer's certificates as DER, exactly as it sent them (see `Served.exact`).
@@ -97,7 +94,7 @@ enum NIOTransport {
 
     /// After the handshake: sends the request and collects the response until it's whole or the
     /// server closes. Servers may keep the socket open despite "Connection: close" (the ESP32's
-    /// does), so completeness is judged by `HTTPOverTLS.isWhole` as on macOS.
+    /// does), so completeness is judged by `HTTPOverTLS.isWhole`.
     final class ExchangeHandler: ChannelInboundHandler, @unchecked Sendable {
         typealias InboundIn = ByteBuffer
         typealias OutboundOut = ByteBuffer
@@ -177,4 +174,3 @@ enum NIOTransport {
         }
     }
 }
-#endif

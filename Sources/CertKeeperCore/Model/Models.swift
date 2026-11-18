@@ -28,9 +28,9 @@ public struct ManagedHost: Codable, Identifiable, Hashable, Sendable {
     /// Optional private key path. Empty = use ssh-agent / ~/.ssh/config defaults.
     public var identityFile: String = ""
     /// Run privileged commands through sudo. Uses `sudo -n` when NOPASSWD is configured, otherwise
-    /// the host password stored in the Keychain.
+    /// the host password in the secret store.
     public var useSudo: Bool = false
-    /// Allow SSH password / keyboard-interactive login with the password stored in the Keychain
+    /// Allow SSH password / keyboard-interactive login with the password in the secret store
     /// (public keys are still tried first).
     public var passwordLogin: Bool = false
     public var notes: String = ""
@@ -107,7 +107,7 @@ public struct ManagedCertificate: Codable, Identifiable, Hashable, Sendable {
     public var renewDaysBeforeExpiry: Int?
     public var autoRenew: Bool = true
 
-    /// The most recently issued certificate (leaf). The private key lives in the Keychain.
+    /// The most recently issued certificate (leaf). The private key lives in the secret store.
     public var current: CertificateSummary?
     public var leafPEM: String?
     public var chainPEM: String?
@@ -285,7 +285,7 @@ public enum DeploymentOption: String, Sendable {
     /// Environment variable name the install script sees.
     public var envName: String { "CK_OPT_" + rawValue.uppercased() }
 
-    /// Options kept in the Keychain instead of the inventory file.
+    /// Options kept in the secret store instead of the inventory file.
     public static let secrets: [DeploymentOption] = [.pfxPassword]
 }
 
@@ -354,7 +354,7 @@ public struct AppSettings: Codable, Hashable, Sendable {
     }
 }
 
-/// Everything persisted to disk (secrets excluded — those live in the Keychain).
+/// Everything persisted to the inventory file (secrets excluded — those live in the secret store).
 public struct Inventory: Codable, Sendable {
     public var hosts: [ManagedHost] = []
     public var certificates: [ManagedCertificate] = []

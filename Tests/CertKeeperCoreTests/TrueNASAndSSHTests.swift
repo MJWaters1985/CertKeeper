@@ -301,13 +301,12 @@ struct FakeTrueNAS {
 @Suite struct PasswordAuthTests {
     @Test func askpassOnlyAnswersPasswordPrompts() {
         let id = UUID()
-        let env = [AskPass.hostVariable: id.uuidString]
-        let lookup: (UUID) -> String? = { $0 == id ? "s3cret" : nil }
-        #expect(AskPass.response(prompt: "root@nas's password: ", environment: env, lookup: lookup) == "s3cret")
-        #expect(AskPass.response(prompt: "(root@nas) Password:", environment: env, lookup: lookup) == "s3cret")
-        #expect(AskPass.response(prompt: "Enter passphrase for key '/x': ", environment: env, lookup: lookup) == nil)
-        #expect(AskPass.response(prompt: "Are you sure you want to continue connecting (yes/no)?", environment: env, lookup: lookup) == nil)
-        #expect(AskPass.response(prompt: "password:", environment: [:], lookup: lookup) == nil)
+        let env = [AskPass.hostVariable: id.uuidString, AskPass.passwordVariable: "s3cret"]
+        #expect(AskPass.response(prompt: "root@nas's password: ", environment: env) == "s3cret")
+        #expect(AskPass.response(prompt: "(root@nas) Password:", environment: env) == "s3cret")
+        #expect(AskPass.response(prompt: "Enter passphrase for key '/x': ", environment: env) == nil)
+        #expect(AskPass.response(prompt: "Are you sure you want to continue connecting (yes/no)?", environment: env) == nil)
+        #expect(AskPass.response(prompt: "password:", environment: [AskPass.passwordVariable: "s3cret"]) == nil, "only when ssh runs it for a host")
     }
 
     /// Uses a fake ssh that records its arguments, environment and stdin.
@@ -319,10 +318,10 @@ struct FakeTrueNAS {
         #!/bin/sh
         for last; do :; done
         if [ "$last" = "sudo -n true" ]; then exit \(sudoNeedsPassword ? 1 : 0); fi
-        { echo "ARGS $*"; echo "ASKPASS ${SSH_ASKPASS:-none} ${SSH_ASKPASS_REQUIRE:-none} ${CK_ASKPASS_HOST:-none}"; echo "REMOTE $last"; cat; } > \(dir.path)/capture
+        { echo "ARGS $*"; echo "ASKPASS ${SSH_ASKPASS:-none} ${SSH_ASKPASS_REQUIRE:-none} ${CK_ASKPASS_HOST:-none} ${CK_ASKPASS_PASSWORD:-none}"; echo "REMOTE $last"; cat; } > \(dir.path)/capture
         """.write(to: ssh, atomically: true, encoding: .utf8)
         try FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: ssh.path)
-        var runner = SSHRunner(askpassPath: "/Applications/CertKeeper.app/Contents/MacOS/CertKeeper")
+        var runner = SSHRunner(askpassPath: "/app/certkeeper-server")
         runner.sshPath = ssh.path
         runner.passwordLookup = { _ in "s3cret" }
         return (runner, dir)
@@ -337,7 +336,7 @@ struct FakeTrueNAS {
         _ = try await runner.run("echo hi", on: host)
         let capture = try String(contentsOf: dir.appendingPathComponent("capture"), encoding: .utf8)
         #expect(capture.contains("BatchMode=no"))
-        #expect(capture.contains("ASKPASS /Applications/CertKeeper.app/Contents/MacOS/CertKeeper force \(host.id.uuidString)"))
+        #expect(capture.contains("ASKPASS /app/certkeeper-server force \(host.id.uuidString) s3cret"), "the password reaches the helper through ssh's environment")
         #expect(capture.contains("REMOTE sudo -k -S -p '' sh -s"))
         #expect(capture.contains("REMOTE sudo -k -S -p '' sh -s\ns3cret\n{\necho hi\n} </dev/null"))
         #expect(!capture.contains("ARGS") || !capture.components(separatedBy: "\n")[0].contains("s3cret"), "password never in argv")

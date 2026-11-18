@@ -329,7 +329,7 @@ enum API {
             guard let data = Data(base64Encoded: input.file) else { throw badRequest("That file couldn't be read") }
             let file: ConfigTransfer.File
             do { file = try ConfigTransfer.read(data) } catch { throw badRequest(error.localizedDescription) }
-            var secrets: [(Keychain.Item, String)] = []
+            var secrets: [(SecretItem, String)] = []
             if file.secrets != nil, let password = input.password, !password.isEmpty {
                 do { secrets = try ConfigTransfer.decryptSecrets(file, password: password) } catch { throw badRequest(error.localizedDescription) }
             }

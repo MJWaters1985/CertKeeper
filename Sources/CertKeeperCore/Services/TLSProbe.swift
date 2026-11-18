@@ -1,8 +1,4 @@
 import Foundation
-#if canImport(Network)
-import Network
-import Security
-#endif
 
 /// Connects to a TLS endpoint and returns the leaf certificate it presents (without validating trust,
 /// so self-signed and staging certificates can be inspected too).
@@ -43,54 +39,6 @@ public enum TLSProbe {
         return Served(chain: try ders.map { try CertCrypto.summarize(der: $0) }, exact: exact)
     }
 
-    #if canImport(Network)
-    /// The peer's certificates as DER, and whether they're exactly what it sent (see `Served.exact`).
-    static func peerChain(host hostPart: String, port: UInt16, endpoint: String, timeout: TimeInterval) async throws -> ([Data], Bool) {
-        let tls = NWProtocolTLS.Options()
-        let captured = CapturedCert()
-        sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { metadata, trust, complete in
-            var ders: [Data] = []
-            sec_protocol_metadata_access_peer_certificate_chain(metadata) { cert in
-                ders.append(SecCertificateCopyData(sec_certificate_copy_ref(cert).takeRetainedValue()) as Data)
-            }
-            if !ders.isEmpty {
-                captured.set(ders, exact: true)
-            } else {
-                let secTrust = sec_trust_copy_ref(trust).takeRetainedValue()
-                let certs = (SecTrustCopyCertificateChain(secTrust) as? [SecCertificate]) ?? []
-                captured.set(certs.map { SecCertificateCopyData($0) as Data }, exact: false)
-            }
-            complete(true)
-        }, .global())
-        sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, hostPart)
-
-        let params = NWParameters(tls: tls)
-        let connection = NWConnection(host: NWEndpoint.Host(hostPart), port: NWEndpoint.Port(rawValue: port) ?? 443, using: params)
-
-        let (ders, exact): ([Data], Bool) = try await withCheckedThrowingContinuation { continuation in
-            let once = Once()
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    once.run {
-                        connection.cancel()
-                        if let d = captured.get(), !d.0.isEmpty { continuation.resume(returning: d) }
-                        else { continuation.resume(throwing: DeployError("No certificate presented by \(endpoint)")) }
-                    }
-                case .failed(let error), .waiting(let error):
-                    once.run { connection.cancel(); continuation.resume(throwing: error) }
-                default: break
-                }
-            }
-            connection.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                once.run { connection.cancel(); continuation.resume(throwing: DeployError("TLS connection to \(endpoint) timed out")) }
-            }
-        }
-        return (ders, exact)
-    }
-    #endif
-
     static func split(_ endpoint: String) -> (String, UInt16) {
         var s = endpoint
         if let r = s.range(of: "://") { s = String(s[r.upperBound...]) }
@@ -105,24 +53,4 @@ public enum TLSProbe {
         return (s, 443)
     }
 
-    #if canImport(Network)
-    private final class CapturedCert: @unchecked Sendable {
-        private let lock = NSLock()
-        private var data: ([Data], Bool)?
-        func set(_ d: [Data], exact: Bool) { lock.lock(); data = (d, exact); lock.unlock() }
-        func get() -> ([Data], Bool)? { lock.lock(); defer { lock.unlock() }; return data }
-    }
-
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func run(_ body: () -> Void) {
-            lock.lock()
-            guard !done else { lock.unlock(); return }
-            done = true
-            lock.unlock()
-            body()
-        }
-    }
-    #endif
 }

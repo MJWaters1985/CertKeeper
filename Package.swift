@@ -1,9 +1,6 @@
 // swift-tools-version: 6.0
 import PackageDescription
 
-/// SwiftNIO carries TLS connections where Network.framework doesn't exist (the Linux server).
-let linuxOnly = TargetDependencyCondition.when(platforms: [.linux])
-
 let products: [Product] = [
     .executable(name: "certkeeper-server", targets: ["CertKeeperServer"]),
 ]
@@ -15,14 +12,14 @@ let targets: [Target] = [
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "_CryptoExtras", package: "swift-crypto"),
             .product(name: "SwiftASN1", package: "swift-asn1"),
-            .product(name: "NIOCore", package: "swift-nio", condition: linuxOnly),
-            .product(name: "NIOPosix", package: "swift-nio", condition: linuxOnly),
-            .product(name: "NIOTLS", package: "swift-nio", condition: linuxOnly),
-            .product(name: "NIOSSL", package: "swift-nio-ssl", condition: linuxOnly),
+            .product(name: "NIOCore", package: "swift-nio"),
+            .product(name: "NIOPosix", package: "swift-nio"),
+            .product(name: "NIOTLS", package: "swift-nio"),
+            .product(name: "NIOSSL", package: "swift-nio-ssl"),
         ],
         swiftSettings: [.swiftLanguageMode(.v5)]
     ),
-    // The web server edition (Linux container; also builds on macOS for development).
+    // The server: CertKeeper's TrueNAS app.
     .executableTarget(
         name: "CertKeeperServer",
         dependencies: [
@@ -56,6 +53,7 @@ let targets: [Target] = [
 
 let package = Package(
     name: "CertKeeper",
+    // CertKeeper ships for Linux; the macOS minimum only lets the package build on a Mac for development.
     platforms: [.macOS(.v15)],
     products: products,
     dependencies: [

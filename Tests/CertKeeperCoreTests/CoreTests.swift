@@ -314,33 +314,10 @@ func selfSigned(_ names: [String], days: Int = 90, algorithm: KeyAlgorithm = .ec
 
 @discardableResult
 func runShell(_ script: String, path: String, env: [String: String] = [:]) throws -> String {
-    #if os(Linux)
-    // Foundation's Process passes blocked signals on to children here; see CleanSpawn.
     let environment = ["PATH": "\(path):/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": FileManager.default.temporaryDirectory.path]
         .merging(env) { $1 }
     SSHRunner.ignoreSIGPIPE()
     let r = try CleanSpawn.run("/bin/sh", ["-s"], environment: environment, stdin: Data(SSHRunner.shielded(script).utf8))
     guard r.status == 0 else { throw DeployError("exit \(r.status): \(String(decoding: r.stderr, as: UTF8.self))") }
     return String(decoding: r.stdout, as: UTF8.self)
-    #else
-    let p = Process()
-    p.executableURL = URL(fileURLWithPath: "/bin/sh")
-    p.arguments = ["-s"]
-    p.environment = ["PATH": "\(path):/usr/bin:/bin:/usr/sbin:/sbin", "TMPDIR": FileManager.default.temporaryDirectory.path]
-        .merging(env) { $1 }
-    let input = Pipe(), output = Pipe(), err = Pipe()
-    p.standardInput = input
-    p.standardOutput = output
-    p.standardError = err
-    try p.run()
-    SSHRunner.ignoreSIGPIPE(); try? input.fileHandleForWriting.write(contentsOf: Data(SSHRunner.shielded(script).utf8))
-    try input.fileHandleForWriting.close()
-    let out = output.fileHandleForReading.readDataToEndOfFile()
-    let errOut = err.fileHandleForReading.readDataToEndOfFile()
-    p.waitUntilExit()
-    guard p.terminationStatus == 0 else {
-        throw DeployError("exit \(p.terminationStatus): \(String(decoding: errOut, as: UTF8.self))")
-    }
-    return String(decoding: out, as: UTF8.self)
-    #endif
 }

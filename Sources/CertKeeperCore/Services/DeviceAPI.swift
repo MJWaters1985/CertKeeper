@@ -1,25 +1,17 @@
 import Crypto
 import Foundation
-#if canImport(FoundationNetworking)
-import FoundationNetworking
-#endif
-#if canImport(Network)
-import Network
-import Security
-#endif
 
 /// Client for devices that take certificates over HTTPS instead of SSH, such as the ESP32-S3 AMOLED
 /// board: `GET /api/tls` describes the certificate being served and `PUT /api/tls/certificate`
-/// installs a chain and key. Requests carry the host's API token (kept as its Keychain password).
+/// installs a chain and key. Requests carry the host's API token (stored as its password).
 ///
 /// Until a publicly trusted certificate is installed the device serves a self-signed one, so a
 /// connection is accepted when the system trusts the certificate for the host's name, or when the
 /// leaf matches the fingerprint pinned on the host. Anything else is refused before the token or a
 /// private key is sent.
 ///
-/// Requests go over Network.framework rather than URLSession: App Transport Security makes URLSession
-/// refuse any certificate the system doesn't trust, even when the app has chosen to trust it, which
-/// would make pinning a self-signed certificate impossible.
+/// Requests go over SwiftNIO (see NIOTransport) rather than URLSession, so the trust decision, pinning
+/// included, is CertKeeper's own.
 public struct DeviceAPI: Sendable {
     public struct TLSInfo: Decodable, Sendable, Equatable {
         /// "installed" or "self-signed".
@@ -166,66 +158,10 @@ final class TrustGate: @unchecked Sendable {
         return false
     }
 
-    #if canImport(Security)
-    func evaluate(_ trust: SecTrust) -> Bool {
-        let leaf = (SecTrustCopyCertificateChain(trust) as? [SecCertificate])?.first
-        return decide(systemTrusted: SecTrustEvaluateWithError(trust, nil), leafDER: leaf.map { SecCertificateCopyData($0) as Data })
-    }
-    #endif
 }
 
 /// One HTTP/1.1 request over a TLS connection (`Connection: close`), returning the raw response.
 enum HTTPOverTLS {
-    #if canImport(Network)
-    static func exchange(host: String, port: UInt16, request: Data, gate: TrustGate, timeout: TimeInterval) async throws -> Data {
-        let tls = NWProtocolTLS.Options()
-        sec_protocol_options_set_tls_server_name(tls.securityProtocolOptions, host)
-        sec_protocol_options_set_min_tls_protocol_version(tls.securityProtocolOptions, .TLSv12)
-        sec_protocol_options_set_verify_block(tls.securityProtocolOptions, { _, trust, complete in
-            complete(gate.evaluate(sec_trust_copy_ref(trust).takeRetainedValue()))
-        }, .global())
-        let connection = NWConnection(host: NWEndpoint.Host(host), port: NWEndpoint.Port(rawValue: port) ?? 443,
-                                      using: NWParameters(tls: tls))
-        let buffer = ResponseBuffer()
-
-        return try await withCheckedThrowingContinuation { continuation in
-            let once = Once()
-            func finish(_ result: Result<Data, Error>) {
-                once.run { connection.cancel(); continuation.resume(with: result) }
-            }
-            func receive() {
-                connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { data, _, isComplete, error in
-                    if let data { buffer.append(data) }
-                    // Servers may keep the socket open despite "Connection: close" (the ESP32's does),
-                    // so stop as soon as the response is whole.
-                    if isComplete || isWhole(buffer.data) { finish(.success(buffer.data)) }
-                    else if let error { buffer.data.isEmpty ? finish(.failure(error)) : finish(.success(buffer.data)) }
-                    else { receive() }
-                }
-            }
-            connection.stateUpdateHandler = { state in
-                switch state {
-                case .ready:
-                    connection.send(content: request, completion: .contentProcessed { error in
-                        if let error { finish(.failure(error)) } else { receive() }
-                    })
-                case .failed(let error):
-                    finish(.failure(error))
-                case .waiting(let error):
-                    finish(.failure(error))
-                default:
-                    break
-                }
-            }
-            connection.start(queue: .global())
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                finish(.failure(DeployError("\(host):\(port) didn't answer within \(Int(timeout)) seconds")))
-            }
-        }
-    }
-
-    #endif
-
     /// Whether `raw` holds a complete response: headers plus Content-Length bytes, or a chunked body
     /// through its last chunk. A response with neither can only end when the server closes.
     static func isWhole(_ raw: Data) -> Bool {
@@ -285,24 +221,5 @@ enum HTTPOverTLS {
             rest = rest[(rest.index(end, offsetBy: 2, limitedBy: rest.endIndex) ?? rest.endIndex)...]  // skip CRLF
         }
         return out
-    }
-
-    private final class ResponseBuffer: @unchecked Sendable {
-        private let lock = NSLock()
-        private var storage = Data()
-        func append(_ d: Data) { lock.lock(); storage.append(d); lock.unlock() }
-        var data: Data { lock.lock(); defer { lock.unlock() }; return storage }
-    }
-
-    private final class Once: @unchecked Sendable {
-        private let lock = NSLock()
-        private var done = false
-        func run(_ body: () -> Void) {
-            lock.lock()
-            guard !done else { lock.unlock(); return }
-            done = true
-            lock.unlock()
-            body()
-        }
     }
 }

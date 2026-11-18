@@ -129,7 +129,7 @@ import Testing
     }
 
     /// PBKDF2-HMAC-SHA256 test vector from RFC 7914 §11 (first 32 bytes), so files exported before the
-    /// switch from CommonCrypto to swift-crypto still decrypt.
+    /// switch to swift-crypto's PBKDF2 still decrypt.
     @Test func keyDerivationMatchesRFC7914() throws {
         let key = try ConfigTransfer.deriveKey(password: "passwd", salt: Data("salt".utf8), iterations: 1)
         let hex = key.withUnsafeBytes { $0.map { String(format: "%02x", $0) }.joined() }

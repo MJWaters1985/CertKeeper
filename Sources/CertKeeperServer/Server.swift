@@ -27,7 +27,7 @@ enum Server {
         }
         let executable = Bundle.main.executablePath ?? CommandLine.arguments[0]
         let model = await MainActor.run {
-            AppModel(fileURL: config.inventoryFile, secrets: secrets, askpassPath: executable, passwordInEnvironment: true)
+            AppModel(fileURL: config.inventoryFile, secrets: secrets, askpassPath: executable)
         }
         if let problem = await MainActor.run(body: { model.loadError }) { ServerState.print("warning: \(problem)") }
         let auth = try Auth(usersFile: config.usersFile)
@@ -139,7 +139,6 @@ enum SSHKeys {
 /// (ssh, ssh-keygen) read them through nss_wrapper, so nothing in the image needs to be writable.
 enum UserEntry {
     static func ensure(_ config: ServerConfig) {
-        #if os(Linux)
         let uid = getuid(), gid = getgid()
         guard getpwuid(uid) == nil else { return }
         let dir = config.configDirectory.appendingPathComponent(".nss", isDirectory: true)
@@ -160,6 +159,5 @@ enum UserEntry {
         setenv("NSS_WRAPPER_PASSWD", passwd.path, 1)
         setenv("NSS_WRAPPER_GROUP", group.path, 1)
         ServerState.print("uid \(uid) has no user entry in the image; SSH uses one from \(dir.path)")
-        #endif
     }
 }

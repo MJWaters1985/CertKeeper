@@ -21,24 +21,12 @@ public final class AppModel {
     /// Secret options found by discovery this session, by endpoint ID — never written to the inventory.
     @ObservationIgnored private var discoveredSecrets: [String: [String: String]] = [:]
 
-    #if canImport(Security)
-    /// The Mac app: secrets in the login Keychain, which the askpass helper reads itself.
-    public convenience init(fileURL: URL = InventoryFile.url) {
-        self.init(fileURL: fileURL, secrets: KeychainStore())
-    }
-    #endif
-
-    /// - Parameters:
-    ///   - askpassPath: The executable ssh runs to answer password prompts (see `AskPass`).
-    ///   - passwordInEnvironment: Hand host passwords to the askpass helper in its environment, for
-    ///     systems where it can't read `secrets` itself (the Linux server's encrypted file).
-    public init(fileURL: URL = InventoryFile.url, secrets: SecretStore,
-                askpassPath: String? = Bundle.main.executablePath, passwordInEnvironment: Bool = false) {
+    /// - Parameter askpassPath: The executable ssh runs to answer password prompts (see `AskPass`).
+    public init(fileURL: URL = InventoryFile.url, secrets: SecretStore, askpassPath: String? = Bundle.main.executablePath) {
         self.fileURL = fileURL
         self.secrets = secrets
         var ssh = SSHRunner(askpassPath: askpassPath)
         ssh.passwordLookup = { [secrets] in secrets.get(.hostPassword($0)) }
-        ssh.passwordInEnvironment = passwordInEnvironment
         self.ssh = ssh
         do {
             inventory = try InventoryFile.load(from: fileURL)
@@ -220,10 +208,10 @@ public final class AppModel {
     }
 
     /// Replaces the configuration with `file`'s. The current inventory is saved next to the live one
-    /// first (no secrets in it). Secrets from the file go to the Keychain; existing Keychain entries
-    /// for items the file doesn't cover are left alone. The activity log is kept. Returns the backup.
+    /// first (no secrets in it). Secrets from the file go to the secret store; existing secrets for
+    /// items the file doesn't cover are left alone. The activity log is kept. Returns the backup.
     @discardableResult
-    public func importConfiguration(_ file: ConfigTransfer.File, secrets imported: [(Keychain.Item, String)]) throws -> URL {
+    public func importConfiguration(_ file: ConfigTransfer.File, secrets imported: [(SecretItem, String)]) throws -> URL {
         let stamp = ISO8601DateFormatter().string(from: Date()).replacingOccurrences(of: ":", with: "-")
         let backup = fileURL.deletingLastPathComponent().appendingPathComponent("inventory.before-import-\(stamp).json")
         try InventoryFile.save(inventory, to: backup)
@@ -651,7 +639,7 @@ public final class AppModel {
     }
 
     /// Monitor only: watch what the TLS endpoint serves, or — when the deployment has no endpoint (a
-    /// service you can't reach from this Mac) — the certificate discovery finds in use on the host.
+    /// service CertKeeper can't reach) — the certificate discovery finds in use on the host.
     /// An endpoint that's set but unreachable is an error; it never silently switches to the host.
     private func checkMonitored(_ d: Deployment, cert: ManagedCertificate, host: ManagedHost, logResult: Bool) async {
         func fail(_ message: String) {
@@ -916,7 +904,7 @@ public final class AppModel {
         }
         if target == .monitor && endpoint.options?["monitor_suggested"] == "true" {
             // The device renews this certificate itself, and discovery found the file it serves: read
-            // that over SSH. Its TLS port may not be reachable from this Mac (UniFi OS Server's 11443
+            // that over SSH. Its TLS port may not be reachable from CertKeeper (UniFi OS Server's 11443
             // resets direct connections), and an endpoint can still be added in the editor.
             d.verifyEndpoint = ""
         } else if let h = host(hostID) {
@@ -945,7 +933,7 @@ public final class AppModel {
 
     // MARK: - Device API hosts
 
-    /// For a Device API host the Keychain "password" is its API token.
+    /// For a Device API host the stored "password" is its API token.
     func deviceAPI(for host: ManagedHost) throws -> DeviceAPI {
         try DeviceAPI(host: host, token: secrets.get(.hostPassword(host.id)) ?? "")
     }
@@ -1013,10 +1001,10 @@ public final class AppModel {
             detail: problems.isEmpty ? "Everything is current" : problems.joined(separator: "; "))
     }
 
-    /// Reads every secret the app owns once, so any Keychain access prompt appears at launch while
-    /// someone is at the Mac — not during an unattended renewal — and missing keys are flagged early.
+    /// Reads every secret the inventory refers to once at startup, so missing keys are flagged early
+    /// rather than during an unattended renewal.
     public func preflightSecrets() async {
-        var items: [Keychain.Item] = [.cloudflareToken, .acmeAccountKey]
+        var items: [SecretItem] = [.cloudflareToken, .acmeAccountKey]
         items += inventory.hosts.map { .hostPassword($0.id) }
         items += inventory.deployments.flatMap { d in DeploymentOption.secrets.map { .deploymentSecret(d.id, $0.rawValue) } }
         let issued = inventory.certificates.filter { $0.leafPEM != nil }

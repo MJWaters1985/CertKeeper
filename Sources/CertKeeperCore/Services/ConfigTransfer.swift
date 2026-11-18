@@ -5,7 +5,7 @@ import Foundation
 /// Export and import of CertKeeper's configuration.
 ///
 /// The file is JSON: the inventory (hosts, certificates, deployments, settings, ACME account links;
-/// not the activity log) plus, optionally, the secrets from the Keychain, encrypted with a password
+/// not the activity log) plus, optionally, the secrets from the secret store, encrypted with a password
 /// (PBKDF2-SHA256 → AES-256-GCM). Without the secrets the file contains no passwords or private keys.
 public enum ConfigTransfer {
     public static let format = "certkeeper-configuration"
@@ -48,9 +48,9 @@ public enum ConfigTransfer {
 
     // MARK: Secrets in an inventory
 
-    /// Every Keychain item the inventory can refer to.
-    public static func secretItems(for inventory: Inventory) -> [Keychain.Item] {
-        var items: [Keychain.Item] = [.cloudflareToken, .acmeAccountKey]
+    /// Every secret the inventory can refer to.
+    public static func secretItems(for inventory: Inventory) -> [SecretItem] {
+        var items: [SecretItem] = [.cloudflareToken, .acmeAccountKey]
         items += inventory.certificates.map { .certificateKey($0.id) }
         items += inventory.hosts.map { .hostPassword($0.id) }
         items += inventory.deployments.flatMap { d in DeploymentOption.secrets.map { .deploymentSecret(d.id, $0.rawValue) } }
@@ -95,8 +95,8 @@ public enum ConfigTransfer {
         return file
     }
 
-    /// Decrypts the secrets in `file`, keyed by Keychain item.
-    public static func decryptSecrets(_ file: File, password: String) throws -> [(Keychain.Item, String)] {
+    /// Decrypts the secrets in `file`, keyed by secret.
+    public static func decryptSecrets(_ file: File, password: String) throws -> [(SecretItem, String)] {
         guard let s = file.secrets, let salt = Data(base64Encoded: s.salt), let sealedData = Data(base64Encoded: s.sealed) else {
             return []
         }
@@ -113,7 +113,7 @@ public enum ConfigTransfer {
     }
 
     static func deriveKey(password: String, salt: Data, iterations: UInt32) throws -> SymmetricKey {
-        // swift-crypto's PBKDF2 (CommonCrypto on Apple platforms, BoringSSL elsewhere). The round count is
+        // swift-crypto's PBKDF2. The round count is
         // read from the file being imported; exports always use `iterations`.
         do {
             return try KDF.Insecure.PBKDF2.deriveKey(from: Array(password.utf8), salt: salt, using: .sha256,

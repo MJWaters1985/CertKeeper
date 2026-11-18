@@ -23,15 +23,11 @@ public struct SSHRunner: Sendable {
     public var sshPath = "/usr/bin/ssh"
     public var connectTimeout = 15
     /// Executable ssh calls (via SSH_ASKPASS) to obtain a login password. It must answer using
-    /// `AskPass.response(prompt:environment:)` — the CertKeeper app binary does this when launched
-    /// with CK_ASKPASS_HOST set.
+    /// `AskPass.response(prompt:environment:)`; the CertKeeper binary does this when launched with
+    /// CK_ASKPASS_HOST set.
     public var askpassPath: String?
     /// Looks up a host's stored password. AppModel points it at its secret store.
-    public var passwordLookup: @Sendable (UUID) -> String? = AskPass.defaultLookup
-    /// Pass the password to the askpass helper in its environment instead of having it look the
-    /// password up itself. For systems where the helper can't reach the secret store (the Linux
-    /// server). Only processes of the same user (or root) can read another process's environment.
-    public var passwordInEnvironment = false
+    public var passwordLookup: @Sendable (UUID) -> String? = { _ in nil }
 
     /// `sh -s` reads its script from stdin, and dash (Ubuntu/Debian's /bin/sh) reads a pipe ahead in
     /// blocks, so any command in the script that also reads stdin swallows the rest of the script,
@@ -93,7 +89,9 @@ public struct SSHRunner: Sendable {
             env["SSH_ASKPASS"] = askpassPath
             env["SSH_ASKPASS_REQUIRE"] = "force"
             env[AskPass.hostVariable] = host.id.uuidString
-            if passwordInEnvironment { env[AskPass.passwordVariable] = passwordLookup(host.id) }
+            // Only for this ssh process and its helper; only the same user (or root) can read a
+            // process's environment.
+            env[AskPass.passwordVariable] = passwordLookup(host.id)
         }
         return env
     }
@@ -143,61 +141,19 @@ public struct SSHRunner: Sendable {
     }
 
     static func execute(_ path: String, _ args: [String], environment: [String: String]? = nil, stdin: String, timeout: TimeInterval) async throws -> Result {
-        #if os(Linux)
-        // Foundation's Process passes Dispatch threads' blocked signals on to the child here.
+        // CleanSpawn rather than Process, on a thread of its own rather than Dispatch's shared pool,
+        // which a long ssh session would otherwise hold for minutes: see CleanSpawn.
         return try await withCheckedThrowingContinuation { continuation in
-            DispatchQueue.global().async {
+            let t = Thread {
                 continuation.resume(with: Swift.Result {
                     let r = try CleanSpawn.run(path, args, environment: environment, stdin: Data(stdin.utf8), timeout: timeout)
                     return Result(status: r.status, stdout: String(decoding: r.stdout, as: UTF8.self),
                                   stderr: String(decoding: r.stderr, as: UTF8.self))
                 })
             }
+            t.stackSize = 512 * 1024
+            t.start()
         }
-        #else
-        try await withCheckedThrowingContinuation { continuation in
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: path)
-            process.arguments = args
-            if let environment { process.environment = environment }
-            let inPipe = Pipe(), outPipe = Pipe(), errPipe = Pipe()
-            process.standardInput = inPipe
-            process.standardOutput = outPipe
-            process.standardError = errPipe
-
-            let group = DispatchGroup()
-            var outData = Data(), errData = Data()
-            group.enter()
-            DispatchQueue.global().async { outData = outPipe.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-            group.enter()
-            DispatchQueue.global().async { errData = errPipe.fileHandleForReading.readDataToEndOfFile(); group.leave() }
-
-            process.terminationHandler = { p in
-                group.notify(queue: .global()) {
-                    continuation.resume(returning: Result(
-                        status: p.terminationStatus,
-                        stdout: String(decoding: outData, as: UTF8.self),
-                        stderr: String(decoding: errData, as: UTF8.self)
-                    ))
-                }
-            }
-            do {
-                try process.run()
-            } catch {
-                continuation.resume(throwing: error)
-                return
-            }
-            DispatchQueue.global().async {
-                // If the remote side exits before reading everything, this fails with EPIPE rather than
-                // crashing, provided SIGPIPE is ignored (see SSHRunner.ignoreSIGPIPE).
-                try? inPipe.fileHandleForWriting.write(contentsOf: Data(stdin.utf8))
-                try? inPipe.fileHandleForWriting.close()
-            }
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                if process.isRunning { process.terminate() }
-            }
-        }
-        #endif
     }
 }
 
@@ -213,25 +169,18 @@ final class SudoCache: @unchecked Sendable {
 }
 
 /// SSH_ASKPASS responder. ssh runs the askpass program with the prompt as its argument and reads
-/// the answer from stdout; CertKeeper's own binary plays that role when CK_ASKPASS_HOST is set.
+/// the answer from stdout; CertKeeper's own binary plays that role when CK_ASKPASS_HOST is set, and
+/// SSHRunner hands it the password in CK_ASKPASS_PASSWORD.
 public enum AskPass {
     public static let hostVariable = "CK_ASKPASS_HOST"
-    /// Set instead of looking the password up when `SSHRunner.passwordInEnvironment` is on.
     public static let passwordVariable = "CK_ASKPASS_PASSWORD"
 
-    #if canImport(Security)
-    public static let defaultLookup: @Sendable (UUID) -> String? = { Keychain.get(.hostPassword($0)) }
-    #else
-    public static let defaultLookup: @Sendable (UUID) -> String? = { _ in nil }
-    #endif
-
     /// Returns the password for password prompts only — never for passphrases or host-key questions.
-    public static func response(prompt: String, environment: [String: String],
-                                lookup: (UUID) -> String? = defaultLookup) -> String? {
-        guard let raw = environment[hostVariable], let id = UUID(uuidString: raw) else { return nil }
+    public static func response(prompt: String, environment: [String: String]) -> String? {
+        guard let raw = environment[hostVariable], UUID(uuidString: raw) != nil else { return nil }
         let p = prompt.lowercased()
         guard p.contains("password"), !p.contains("passphrase") else { return nil }
-        return environment[passwordVariable] ?? lookup(id)
+        return environment[passwordVariable]
     }
 }
 

@@ -1,19 +1,20 @@
-#if os(Linux)
 import Foundation
 #if canImport(Glibc)
 import Glibc
 #elseif canImport(Musl)
 import Musl
+#elseif canImport(Darwin)
+import Darwin
 #endif
 
-/// Starts child processes on Linux with a clean signal state, in place of Foundation's `Process`.
+/// Starts child processes with a clean signal state, in place of Foundation's `Process`.
 ///
 /// On Linux, `Process` hands each child the signal mask of the thread that launched it, and
 /// Dispatch's worker threads block nearly every signal. A child started from async code therefore
 /// can't be stopped with SIGTERM, and tools that rely on signals (`timeout` uses SIGALRM) never fire.
 /// This launcher uses posix_spawn with an empty mask and default dispositions (SIGPIPE included,
-/// which CertKeeper itself ignores), and creates its pipes close-on-exec so no other child holds
-/// them open. macOS's `Process` already does both.
+/// which CertKeeper itself ignores), and passes the child nothing but its stdin, stdout and stderr.
+/// (It also builds on macOS, for development.)
 enum CleanSpawn {
     struct Output {
         /// The exit code, or the signal number when a signal ended the process (as `Process` reports).
@@ -51,33 +52,35 @@ enum CleanSpawn {
         close(input.read); close(output.write); close(errors.write)
         spawnLock.unlock()
 
-        let group = DispatchGroup()
+        // Everything that blocks gets its own thread, never Dispatch's shared pool: with many children
+        // at once, blocked pool threads could leave none to feed a child its input, so the child waits
+        // for input, we wait for the child, and nothing finishes (seen with the test suite in parallel).
         let collected = Collected()
-        group.enter()
-        DispatchQueue.global().async { collected.setOut(readAll(output.read)); close(output.read); group.leave() }
-        group.enter()
-        DispatchQueue.global().async { collected.setErr(readAll(errors.read)); close(errors.read); group.leave() }
-        DispatchQueue.global().async {
-            // A child that exits without reading everything makes this fail with EPIPE, which is fine
-            // because CertKeeper ignores SIGPIPE (SSHRunner.ignoreSIGPIPE).
-            writeAll(input.write, stdin)
-            close(input.write)
-        }
+        let out = Self.thread { collected.setOut(readAll(output.read)); close(output.read) }
+        let err = Self.thread { collected.setErr(readAll(errors.read)); close(errors.read) }
 
         let state = ExitState()
         if let timeout {
-            DispatchQueue.global().asyncAfter(deadline: .now() + timeout) {
-                guard state.signalIfRunning(pid, SIGTERM) else { return }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 2) { _ = state.signalIfRunning(pid, SIGKILL) }
+            _ = Self.thread {
+                guard state.waitForExit(until: Date().addingTimeInterval(timeout)) == false,
+                      state.signalIfRunning(pid, SIGTERM) else { return }
+                if state.waitForExit(until: Date().addingTimeInterval(2)) == false { _ = state.signalIfRunning(pid, SIGKILL) }
             }
         }
+        // Input is written on this thread while the readers drain the output. A child that exits
+        // without reading everything makes this fail with EPIPE, which is fine because CertKeeper
+        // ignores SIGPIPE (SSHRunner.ignoreSIGPIPE); one that stops reading is ended by the timeout.
+        writeAll(input.write, stdin)
+        close(input.write)
+
         // Wait for the exit without reaping, so the timeout can't signal a recycled PID, then reap.
         var info = siginfo_t()
         while waitid(P_PID, id_t(pid), &info, WEXITED | WNOWAIT) == -1 && errno == EINTR {}
         state.markExited()
         var raw: Int32 = 0
         while waitpid(pid, &raw, 0) == -1 && errno == EINTR {}
-        group.wait()
+        out.wait()
+        err.wait()
         // Decoded by hand: Swift doesn't import the WIFEXITED family of macros.
         let signal = raw & 0x7f
         let status = signal == 0 ? (raw >> 8) & 0xff : signal
@@ -97,7 +100,11 @@ enum CleanSpawn {
 
     private static func spawn(_ path: String, _ args: [String], environment: [String: String]?, directory: String?,
                               stdio: (Int32, Int32, Int32)) throws -> pid_t {
+        #if canImport(Darwin)
+        var actions: posix_spawn_file_actions_t?
+        #else
         var actions = posix_spawn_file_actions_t()
+        #endif
         posix_spawn_file_actions_init(&actions)
         defer { posix_spawn_file_actions_destroy(&actions) }
         // dup2 onto 0/1/2 clears close-on-exec for those three only.
@@ -106,23 +113,33 @@ enum CleanSpawn {
         posix_spawn_file_actions_adddup2(&actions, stdio.2, 2)
         #if canImport(Glibc)
         // Nothing else open in this process reaches the child, whether or not it was close-on-exec.
-        // (musl has no closefrom; there the close-on-exec pipes made under spawnLock have to do.)
+        // (musl has no closefrom; there the close-on-exec pipes made under spawnLock have to do.
+        // macOS gets the same effect from POSIX_SPAWN_CLOEXEC_DEFAULT below.)
         posix_spawn_file_actions_addclosefrom_np(&actions, 3)
         #endif
         if let directory { posix_spawn_file_actions_addchdir_np(&actions, directory) }
 
+        #if canImport(Darwin)
+        var attributes: posix_spawnattr_t?
+        // sigemptyset and friends are macros on Darwin, which Swift can't call; sigset_t is a bit mask.
+        var noneBlocked: sigset_t = 0
+        var allDefault: sigset_t = ~0 & ~(1 << (SIGKILL - 1)) & ~(1 << (SIGSTOP - 1))
+        let flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF | POSIX_SPAWN_CLOEXEC_DEFAULT
+        #else
         var attributes = posix_spawnattr_t()
-        posix_spawnattr_init(&attributes)
-        defer { posix_spawnattr_destroy(&attributes) }
         var noneBlocked = sigset_t()
         sigemptyset(&noneBlocked)
-        posix_spawnattr_setsigmask(&attributes, &noneBlocked)
         var allDefault = sigset_t()
         sigfillset(&allDefault)
         sigdelset(&allDefault, SIGKILL)
         sigdelset(&allDefault, SIGSTOP)
+        let flags = POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF
+        #endif
+        posix_spawnattr_init(&attributes)
+        defer { posix_spawnattr_destroy(&attributes) }
+        posix_spawnattr_setsigmask(&attributes, &noneBlocked)
         posix_spawnattr_setsigdefault(&attributes, &allDefault)
-        posix_spawnattr_setflags(&attributes, Int16(POSIX_SPAWN_SETSIGMASK | POSIX_SPAWN_SETSIGDEF))
+        posix_spawnattr_setflags(&attributes, Int16(flags))
 
         let env = (environment ?? ProcessInfo.processInfo.environment).map { "\($0.key)=\($0.value)" }
         let argv = ([path] + args).map { strdup($0) } + [nil]
@@ -189,15 +206,29 @@ enum CleanSpawn {
 
     /// Signals the child only while it hasn't been reaped, so a recycled PID is never hit.
     private final class ExitState: @unchecked Sendable {
-        private let lock = NSLock()
+        private let condition = NSCondition()
         private var exited = false
-        func markExited() { lock.lock(); exited = true; lock.unlock() }
+        func markExited() { condition.lock(); exited = true; condition.broadcast(); condition.unlock() }
+        /// Waits until the child exits or `deadline` passes; returns whether it exited.
+        func waitForExit(until deadline: Date) -> Bool {
+            condition.lock(); defer { condition.unlock() }
+            while !exited && condition.wait(until: deadline) {}
+            return exited
+        }
         func signalIfRunning(_ pid: pid_t, _ signal: Int32) -> Bool {
-            lock.lock(); defer { lock.unlock() }
+            condition.lock(); defer { condition.unlock() }
             guard !exited else { return false }
             kill(pid, signal)
             return true
         }
     }
+
+    /// Runs `body` on a new thread; `wait()` on the result returns once it's done.
+    private static func thread(_ body: @escaping @Sendable () -> Void) -> DispatchSemaphore {
+        let done = DispatchSemaphore(value: 0)
+        let t = Thread { body(); done.signal() }
+        t.stackSize = 256 * 1024
+        t.start()
+        return done
+    }
 }
-#endif

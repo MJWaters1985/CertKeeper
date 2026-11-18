@@ -20,7 +20,7 @@ import Testing
         let tls = root.appendingPathComponent("etc/family-hub/tls"), bin = root.appendingPathComponent("bin")
         try FileManager.default.createDirectory(at: tls, withIntermediateDirectories: true)
         try FileManager.default.createDirectory(at: bin, withIntermediateDirectories: true)
-        // RSA: macOS's LibreSSL s_server fails ECDSA handshakes (alert 40); hosts' OpenSSL 3 handles either.
+        // RSA: LibreSSL's s_server fails ECDSA handshakes (alert 40); OpenSSL 3 handles either.
         let (leaf, key) = try selfSigned(["family-hub.example.com"], algorithm: .rsa2048)
         let (inter, _) = try selfSigned(["Test Intermediate"])
         try CertCrypto.joinPEMs([leaf, inter]).write(to: tls.appendingPathComponent("fullchain.pem"), atomically: true, encoding: .utf8)

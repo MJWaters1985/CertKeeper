@@ -2,8 +2,8 @@ import Foundation
 import Testing
 @testable import CertKeeperCore
 
-/// Real TLS connections to a local `openssl s_server`: the probe (Network.framework on macOS,
-/// SwiftNIO on Linux) and the device API's trust decision.
+/// Real TLS connections to a local `openssl s_server`: the TLS probe and the device API's trust
+/// decision.
 /// Timeouts match the device API's 30 s: on a busy two-core CI runner, the first trust check (which
 /// loads the system CA bundle) alongside the rest of the suite took longer than 10 s.
 @Suite struct TLSTransportTests {
@@ -18,7 +18,7 @@ import Testing
     func start() throws -> Server {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ck-tls-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        // RSA: macOS's LibreSSL s_server fails ECDSA handshakes.
+        // RSA: LibreSSL's s_server fails ECDSA handshakes.
         let (leaf, key) = try selfSigned(["device.example.com"], algorithm: .rsa2048)
         let (intermediate, _) = try selfSigned(["Test Intermediate"])
         let full = dir.appendingPathComponent("full.pem"), inter = dir.appendingPathComponent("inter.pem"), k = dir.appendingPathComponent("key.pem")
@@ -51,6 +51,7 @@ import Testing
         let served = try await TLSProbe.fetchServed(endpoint: "127.0.0.1:\(server.port)", timeout: 30)
         #expect(served.chain.first?.sha256 == server.leafSHA256)
         #expect(served.chain.first?.dnsNames == ["device.example.com"])
+        // Only OpenSSL's s_server (Linux) can be told to send the intermediate too.
         #if os(Linux)
         #expect(served.exact)
         #expect(served.chain.map(\.subject) == ["CN=device.example.com", "CN=Test Intermediate"], "exactly what was sent")
