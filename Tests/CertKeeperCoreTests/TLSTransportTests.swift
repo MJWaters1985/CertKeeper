@@ -4,6 +4,8 @@ import Testing
 
 /// Real TLS connections to a local `openssl s_server`: the probe (Network.framework on macOS,
 /// SwiftNIO on Linux) and the device API's trust decision.
+/// Timeouts match the device API's 30 s: on a busy two-core CI runner, the first trust check (which
+/// loads the system CA bundle) alongside the rest of the suite took longer than 10 s.
 @Suite struct TLSTransportTests {
     struct Server {
         let process: TestProcess
@@ -46,7 +48,7 @@ import Testing
     @Test func probeReadsTheServedChain() async throws {
         let server = try start()
         defer { server.stop() }
-        let served = try await TLSProbe.fetchServed(endpoint: "127.0.0.1:\(server.port)")
+        let served = try await TLSProbe.fetchServed(endpoint: "127.0.0.1:\(server.port)", timeout: 30)
         #expect(served.chain.first?.sha256 == server.leafSHA256)
         #expect(served.chain.first?.dnsNames == ["device.example.com"])
         #if os(Linux)
@@ -60,7 +62,7 @@ import Testing
         defer { server.stop() }
         let gate = TrustGate(pinned: DeviceAPI.formatFingerprint(server.leafSHA256))
         let raw = try await HTTPOverTLS.exchange(host: "127.0.0.1", port: UInt16(server.port),
-                                                 request: Data("GET / HTTP/1.0\r\n\r\n".utf8), gate: gate, timeout: 10)
+                                                 request: Data("GET / HTTP/1.0\r\n\r\n".utf8), gate: gate, timeout: 30)
         #expect(String(decoding: raw.prefix(12), as: UTF8.self) == "HTTP/1.0 200")
         #expect(gate.rejectedFingerprint == nil)
     }
@@ -71,7 +73,7 @@ import Testing
         let gate = TrustGate(pinned: "")
         await #expect(throws: (any Error).self) {
             _ = try await HTTPOverTLS.exchange(host: "127.0.0.1", port: UInt16(server.port),
-                                               request: Data("GET / HTTP/1.0\r\n\r\n".utf8), gate: gate, timeout: 10)
+                                               request: Data("GET / HTTP/1.0\r\n\r\n".utf8), gate: gate, timeout: 30)
         }
         #expect(gate.rejectedFingerprint == server.leafSHA256, "the refused leaf's fingerprint is reported")
     }
