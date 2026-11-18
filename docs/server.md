@@ -14,30 +14,41 @@ Cloudflare DNS-01 and installs them on your hosts over SSH, on a schedule.
 
 ## Install on TrueNAS
 
-On TrueNAS Community Edition 24.10 or later, install CertKeeper as a custom app:
+CertKeeper is a TrueNAS app for TrueNAS Community Edition 24.10 or later.
 
-1. **Create a dataset for its data**, for example `tank/certkeeper`, with the **Apps** preset. Edit its
-   permissions so the owner user and group are **apps** (568).
-2. Open **Apps › Discover Apps**, choose **⋮ › Install via YAML**, name the app `certkeeper`, and paste:
+1. Open **Apps › Discover Apps**, search for **CertKeeper** and choose **Install**.
+2. Fill in the form. The defaults work; the settings that matter:
 
-   ```yaml
-   services:
-     certkeeper:
-       image: ghcr.io/mjwaters1985/certkeeper:1.0.0
-       restart: unless-stopped
-       user: "568:568"
-       ports:
-         - "30600:8443"                  # https://<nas>:30600
-       volumes:
-         - /mnt/tank/certkeeper:/config  # the dataset from step 1
-       stop_grace_period: 3m             # lets a running deployment finish on stop
-   ```
+   | Section | Setting | |
+   |---|---|---|
+   | CertKeeper Configuration | **Secrets key** | Optional. Keeps the key for CertKeeper's secrets out of its data folder; see [Secrets](#secrets). Set it now or never: it can't be added later |
+   | User and Group | **User ID**, **Group ID** | 568 (*apps*) by default |
+   | Network | **Web Port** | 30600 by default. To use port 443 on an address of its own, see [below](#its-own-address-name-and-port-443-on-truenas) |
+   | Network | **Certificate** | Optional: a certificate from TrueNAS for the web interface. Leave it empty to let CertKeeper make or manage its own; see [HTTPS](#https-for-the-web-interface) |
+   | Storage | **CertKeeper Data** | Where `/config` lives: an ixVolume (default), or a host path to a dataset owned by *apps* (568), which is easier to snapshot and back up |
 
-3. **Save**. When the app is running, open its **Logs**: they show the one-time setup code for the
-   [first start](#first-start).
+3. **Install**. When the app is running, open its **Logs**: they show the one-time setup code for the
+   [first start](#first-start). The app's **Web UI** button opens CertKeeper.
 
-To reach CertKeeper at `https://certkeeper.example.com` without a port number, see
-[its own address, name and port 443](#its-own-address-name-and-port-443-on-truenas).
+> **Until CertKeeper appears in the catalog** (its entry is awaiting review), install it as a custom app:
+> create a dataset owned by *apps* (568), then choose **Apps › Discover Apps › ⋮ › Install via YAML**, name
+> the app `certkeeper`, and paste:
+>
+> ```yaml
+> services:
+>   certkeeper:
+>     image: ghcr.io/mjwaters1985/certkeeper:1.0.0
+>     restart: unless-stopped
+>     user: "568:568"
+>     ports:
+>       - "30600:8443"                  # https://<nas>:30600, or "192.0.2.50:443:8443" for its own address
+>     volumes:
+>       - /mnt/tank/certkeeper:/config  # the dataset
+>     stop_grace_period: 3m             # lets a running deployment finish on stop
+> ```
+>
+> Once it's in the catalog, move to the catalog app: export the configuration with a password, install
+> the catalog app, import the file, then delete the custom app.
 
 ## First start
 
@@ -81,8 +92,8 @@ The web interface only uses HTTPS. Its certificate is, in order of preference:
    `certkeeper.example.com`), issue it, and pick it in **Settings › Web interface HTTPS**. It's renewed
    with the others and switched in without a restart. The certificate's page lists it as deployed to
    *This CertKeeper · Web interface*.
-2. **One from the platform.** Set `CERTKEEPER_TLS_CERT` and `CERTKEEPER_TLS_KEY` to PEM files in the
-   container. Renewed files are picked up within a minute.
+2. **One from TrueNAS.** Pick it under **Network › Certificate** in the app's settings. When TrueNAS
+   renews it, CertKeeper picks it up within a minute.
 3. **Self-signed**, made on first start.
 
 If the chosen certificate's files can't be loaded, CertKeeper still starts, on its self-signed certificate,
@@ -97,8 +108,9 @@ To reach CertKeeper at `https://certkeeper.example.com`, give it a LAN address o
 2. **Free port 443 on that address.** The TrueNAS web interface listens on every address by default. In
    **System › General Settings › GUI**, set its IPv4 address to the NAS's main address only. It stays
    reachable there.
-3. **Bind the app to the alias.** In the app's YAML, change the port line to `"192.0.2.50:443:8443"` and
-   save.
+3. **Bind the app to the alias.** In the app's settings (**Apps › CertKeeper › Edit**), under
+   **Network › Web Port**, set **Port Bind Mode** to *Publish*, **Port Number** to `443`, and add
+   `192.0.2.50` under **Host IPs**. Save.
 4. **Add a DNS record** pointing `certkeeper.example.com` at `192.0.2.50`, for example a host override in
    your LAN's DNS resolver.
 5. **Issue a certificate** for `certkeeper.example.com` in CertKeeper and pick it in
@@ -109,13 +121,16 @@ couldn't reach the NAS itself to manage its certificates.
 
 ## Settings
 
+The app's settings form sets CertKeeper's environment variables. Others can be added under
+**CertKeeper Configuration › Additional Environment Variables**.
+
 | Variable | Default | |
 |---|---|---|
-| `CERTKEEPER_PORT` | `8443` | HTTPS port inside the app's container |
+| `CERTKEEPER_PORT` | `8443` | The HTTPS port. Set by **Network › Web Port** |
 | `CERTKEEPER_HOST` | `0.0.0.0` | Address to listen on inside the app's container |
 | `CERTKEEPER_CONFIG_DIR` | `/config` | All state; also `HOME` |
-| `CERTKEEPER_TLS_CERT`, `CERTKEEPER_TLS_KEY` | | A certificate and key (PEM files mounted into the app) for the web interface. Set both or neither |
-| `CERTKEEPER_SECRET_KEY` | | The key for the secrets file (see [Secrets](#secrets)) |
+| `CERTKEEPER_TLS_CERT`, `CERTKEEPER_TLS_KEY` | | The web interface's certificate and key (PEM files). Set by **Network › Certificate** |
+| `CERTKEEPER_SECRET_KEY` | | The key for the secrets file (see [Secrets](#secrets)). Set by **Secrets key** |
 | `CERTKEEPER_SCHEDULE` | `on` | `off` stops automatic rotation passes (for demos and tests) |
 
 Everything else (Let's Encrypt account, renewal window, schedule, log retention) is in the web
@@ -145,17 +160,18 @@ The activity log is also written to the app's **Logs**.
 in configuration exports and in copies of the inventory, but not against someone who can read the whole
 folder.
 
-To keep the key out of the folder, set `CERTKEEPER_SECRET_KEY` before the first start: 32 random bytes in
-base64 (`openssl rand -base64 32`), or a long passphrase. No `secrets.key` is written then. If the variable
-is later added, changed or removed, CertKeeper refuses to start rather than lose the secrets; set it back.
+To keep the key out of the folder, fill in **Secrets key** when you install the app (it sets
+`CERTKEEPER_SECRET_KEY`): 32 random bytes in base64 (`openssl rand -base64 32`), or a long passphrase. No
+`secrets.key` is written then. If the key is later added, changed or removed, CertKeeper refuses to start
+rather than lose the secrets; set it back.
 
 ## Backups, updates and moving
 
 * **Backups.** Snapshot or replicate the app's dataset, which holds everything in `/config`.
   **Settings › Configuration › Export** with a password also saves everything, secrets included, in one
   file.
-* **Updates.** Edit the app's YAML (Apps › CertKeeper › Edit) and change the image tag. Releases are listed
-  on the
+* **Updates.** When a new version is out, TrueNAS shows an update for the app under **Apps**; choose
+  **Update**. Releases are listed on the
   [releases page](https://github.com/MJWaters1985/CertKeeper/releases). On stop, CertKeeper waits up to
   about three minutes for a running deployment to finish. A deployment that still gets cut off stays out of
   date and is redeployed by the first rotation pass after the restart.

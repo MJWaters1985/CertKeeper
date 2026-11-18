@@ -16,8 +16,9 @@ More screenshots: [a certificate](docs/screenshots/2-certificate.png),
 
 ## Documentation
 
-* **[Installing and running CertKeeper](docs/server.md)**: installing it on TrueNAS, first start, HTTPS
-  for the web interface, its own address and port 443, backups, updates and troubleshooting.
+* **[Installing and running CertKeeper](docs/server.md)**: installing it from the TrueNAS app catalog,
+  first start, HTTPS for the web interface, its own address and port 443, backups, updates and
+  troubleshooting.
 * **[The Cloudflare API token](docs/cloudflare-token.md)**: the permissions it needs and how to create it.
 * The rest of this page: how CertKeeper works and what it supports.
 
